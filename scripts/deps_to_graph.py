@@ -8,37 +8,41 @@ ap.add_argument("--out", required=True)
 a = ap.parse_args()
 
 raw = json.load(open(a.deps))
-# Handle either {"data":[...]} or a bare list
+
+# Accept either [{"parent","child","callCount"}, ...] OR {"data":[...]}
+if isinstance(raw, dict):
+    data = raw.get("data", [])
+elif isinstance(raw, list):
+    data = raw
+else:
+    data = []
+
 edges = []
-data = raw.get("data", raw)
 for item in data:
-    # support multiple schema variants
+    # tolerate aliases found in Jaeger deps/traces payloads
     parent = item.get("parent") or item.get("caller") or item.get("p")
     child  = item.get("child")  or item.get("callee") or item.get("c")
-    if parent is None or child is None: 
-        continue
-    edges.append((str(parent), str(child)))
+    if parent and child:
+        edges.append((str(parent), str(child)))
 
-def norm(s): 
-    s = s.strip().lower().replace("_","-")
-    # simplify common suffixes to aid matching replicas/compose service keys
-    for suf in ("-service","service"):
-        if s.endswith(suf):
-            s = s[: -len(suf)]
+def norm(s: str) -> str:
+    s = s.strip().lower().replace("_", "-")
+    for suf in ("-service", "service"):  # normalize common suffixes
+        if s.endswith(suf): s = s[: -len(suf)]
     return s
 
-Vset = set()
-for u,v in edges:
-    Vset.add(norm(u)); Vset.add(norm(v))
-
+# build node index
+Vset = {norm(u) for u, v in edges} | {norm(v) for u, v in edges}
 V = sorted(Vset)
-idx = {v:i for i,v in enumerate(V)}
-E = sorted({(idx[norm(u)], idx[norm(v)]) for u,v in edges})
+idx = {v: i for i, v in enumerate(V)}
 
-entry = [norm(x) for x in open(a.entrypoints).read().splitlines() if x.strip()]
+# unique directed edges on normalized ids
+E = sorted({(idx[norm(u)], idx[norm(v)]) for u, v in edges})
+
+# entrypoints → ids (ignore missing ones gracefully)
+entry = [norm(x) for x in open(a.entrypoints) if x.strip() and not x.startswith("#")]
 entry_ids = [idx[e] for e in entry if e in idx]
 
 graph = {"services": V, "edges": E, "entrypoints": entry_ids}
-with open(a.out, "w") as f:
-    json.dump(graph, f)
-print(f"Wrote {a.out} with {len(V)} services and {len(E)} edges")
+json.dump(graph, open(a.out, "w"))
+print(f"Wrote {a.out}: |V|={len(V)} |E|={len(E)} entries={len(entry_ids)}")
