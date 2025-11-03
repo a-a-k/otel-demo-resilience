@@ -18,11 +18,18 @@ if [ "$TOTAL" -eq 0 ]; then
   echo "no eligible containers"; sleep "$WINDOW"; exit 0
 fi
 
-# draw a sample to stop
-KILL_N=$(python3 - <<PY
-import math; print(max(1, math.floor($TOTAL * float("$P_FAIL"))))
+# draw K ~ Binomial(TOTAL, p_fail); allow K=0 to mirror independent sampling
+KILL_N=$(python3 - <<'PY'
+import random
+n=int("$TOTAL")
+p=float("$P_FAIL")
+print(sum(1 for _ in range(n) if random.random()<p))
 PY
 )
+
+if [ "$KILL_N" -le 0 ]; then
+  echo "No kills this window (K=0 of $TOTAL)"; sleep "$WINDOW"; exit 0
+fi
 
 shuf -e "${CANDIDATES[@]}" | head -n "${KILL_N}" > /tmp/killset.txt
 echo "Stopping $(wc -l </tmp/killset.txt) of $TOTAL containers for ${WINDOW}s"; cat /tmp/killset.txt

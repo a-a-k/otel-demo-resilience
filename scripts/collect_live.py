@@ -5,15 +5,22 @@ import requests as R
 HEADERS = {"Accept": "application/json"}
 
 def _json(url, timeout=6):
-    r = R.get(url, headers=HEADERS, timeout=timeout, allow_redirects=True)
-    if "application/json" in (r.headers.get("content-type", "")).lower():
-        return r.json()
+    try:
+        r = R.get(url, headers=HEADERS, timeout=timeout, allow_redirects=True)
+        ctype = (r.headers.get("content-type", "")).lower()
+        if "application/json" in ctype:
+            return r.json()
+    except Exception:
+        pass
     return None
 
 def _csv(url, timeout=6):
-    r = R.get(url, timeout=timeout, allow_redirects=True)
-    if "text/csv" in (r.headers.get("content-type", "")).lower():
-        return list(csv.DictReader(io.StringIO(r.text)))
+    try:
+        r = R.get(url, timeout=timeout, allow_redirects=True)
+        if "text/csv" in (r.headers.get("content-type", "")).lower():
+            return list(csv.DictReader(io.StringIO(r.text)))
+    except Exception:
+        pass
     return None
 
 def discover_base(base):

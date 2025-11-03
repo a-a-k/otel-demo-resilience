@@ -17,13 +17,21 @@ elif isinstance(raw, list):
 else:
     data = []
 
+SKIP = {
+    "frontend-proxy","jaeger","grafana","otel-collector","zipkin",
+    "kafka","kafka-server","prometheus","loadgenerator"
+}
+
 edges = []
 for item in data:
     # tolerate aliases found in Jaeger deps/traces payloads
     parent = item.get("parent") or item.get("caller") or item.get("p")
     child  = item.get("child")  or item.get("callee") or item.get("c")
-    if parent and child:
-        edges.append((str(parent), str(child)))
+    if not parent or not child:
+        continue
+    parent, child = str(parent), str(child)
+    def norm(s): 
+        s=s.strip().lower().replace("_","-"); 
 
 def norm(s: str) -> str:
     s = s.strip().lower().replace("_", "-")
