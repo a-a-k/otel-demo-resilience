@@ -1,0 +1,2 @@
+# entrypoints to evaluate (normalized service names)
+frontend

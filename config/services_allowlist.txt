@@ -1,0 +1,13 @@
+# Application services eligible for fail-stop kills (one per line)
+frontend
+checkoutservice
+productcatalogservice
+cartservice
+paymentservice
+recommendationservice
+shippingservice
+currencyservice
+adservice
+emailservice
+frauddetectionservice
+accountingservice
