@@ -50,11 +50,17 @@ jobs:
       - name: Warm up & ensure trace traffic
         run: sleep "$WARMUP_SECONDS"
 
-      - name: Export Jaeger Dependencies
-        run: bash scripts/export_deps.sh "${LOOKBACK_MINUTES}" > deps.json
+      - name: Export graph from traces (deps.json)
+        run: |
+          python3 scripts/traces_to_deps.py > deps.json
+          test -s deps.json || (echo "deps.json empty"; exit 1)
 
       - name: Build graph.json (deps → G)
-        run: python3 scripts/deps_to_graph.py --deps deps.json --entrypoints config/entrypoints.txt --out graph.json
+        run: |
+          python3 scripts/deps_to_graph.py \
+            --deps deps.json \
+            --entrypoints config/entrypoints.txt \
+            --out graph.json
 
       - name: Measure replicas (actual Compose)
         run: bash scripts/read_replicas.sh > replicas.json
