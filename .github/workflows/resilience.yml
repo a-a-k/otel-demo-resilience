@@ -12,13 +12,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [ norepl, repl ]
         p_fail: [ "0.1", "0.3", "0.5", "0.7", "0.9" ]
 
     env:
       ENVOY_PORT: "8080"
       LOOKBACK_MINUTES: "30"
-      WARMUP_SECONDS: "90"
+      WARMUP_SECONDS: "120"
       WINDOW_SECONDS: "30"
       WINDOWS: "12"
       SAMPLES: "120000"
@@ -32,78 +31,52 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y jq
 
-
       - name: Print Docker versions
         run: |
           docker --version
           docker compose version || true
 
       - name: Fetch opentelemetry-demo
-        run: |
-          bash vendor/fetch-otel-demo.sh "$OTEL_DEMO_REF"
-          ls -1 vendor/opentelemetry-demo
+        run: bash vendor/fetch-otel-demo.sh "$OTEL_DEMO_REF"
 
       - name: Bring up the demo (Compose)
         working-directory: vendor/opentelemetry-demo
         run: |
           docker compose up --force-recreate --remove-orphans --detach
-          bash ../../scripts/wait_http.sh "http://localhost:${ENVOY_PORT}/" 120
-          bash ../../scripts/wait_http.sh "http://localhost:${ENVOY_PORT}/jaeger/ui" 120
-          bash ../../scripts/wait_http.sh "http://localhost:${ENVOY_PORT}/loadgen/" 120
-
-      - name: Scale services for mode = ${{ matrix.mode }}
-        if: matrix.mode == 'repl'
-        working-directory: vendor/opentelemetry-demo
-        run: |
-          docker compose up -d \
-            --scale checkoutservice=3 \
-            --scale productcatalogservice=3 \
-            --scale cartservice=2 \
-            --scale paymentservice=2 \
-            --scale recommendationservice=2 \
-            --scale shippingservice=2 \
-            --scale currencyservice=2 \
-            --scale adservice=2 \
-            --scale frontend=2
+          bash ../../scripts/wait_http.sh "http://localhost:${ENVOY_PORT}/" 180
+          bash ../../scripts/wait_http.sh "http://localhost:${ENVOY_PORT}/jaeger/ui" 180
+          bash ../../scripts/wait_http.sh "http://localhost:${ENVOY_PORT}/loadgen/" 180
 
       - name: Warm up & ensure trace traffic
-        run: |
-          sleep "$WARMUP_SECONDS"
+        run: sleep "$WARMUP_SECONDS"
 
       - name: Export Jaeger Dependencies
-        run: |
-          bash scripts/export_deps.sh "${LOOKBACK_MINUTES}" > deps.json
-          jq '.[0]|keys' deps.json || true
+        run: bash scripts/export_deps.sh "${LOOKBACK_MINUTES}" > deps.json
 
       - name: Build graph.json (deps → G)
-        run: |
-          python3 scripts/deps_to_graph.py --deps deps.json --entrypoints config/entrypoints.txt --out graph.json
-          head -c 800 graph.json || true
+        run: python3 scripts/deps_to_graph.py --deps deps.json --entrypoints config/entrypoints.txt --out graph.json
 
-      - name: Measure replicas (post-scale)
-        run: |
-          bash scripts/read_replicas.sh > replicas.json
-          cat replicas.json
+      - name: Measure replicas (actual Compose)
+        run: bash scripts/read_replicas.sh > replicas.json
 
       - name: Run Monte-Carlo estimator (R_model)
         run: |
           python3 scripts/resilience.py \
             --graph graph.json --replicas replicas.json \
             --p "${{ matrix.p_fail }}" --samples "${SAMPLES}" \
-            --out model_${{ matrix.mode }}_${{ matrix.p_fail }}.json
+            --out model_${{ matrix.p_fail }}.json
 
       - name: Chaos windows + R_live from Locust
         run: |
           python3 -m pip install --quiet requests
           for i in $(seq 1 "${WINDOWS}"); do
             echo "::group::window $i"
-            # run chaos and measurement concurrently so they overlap
             bash scripts/compose_chaos.sh "${{ matrix.p_fail }}" config/services_allowlist.txt "${WINDOW_SECONDS}" &
             CHAOS_PID=$!
             python3 scripts/collect_live.py \
               --locust "http://localhost:${ENVOY_PORT}/loadgen" \
               --window "${WINDOW_SECONDS}" \
-              --out live_${{ matrix.mode }}_${{ matrix.p_fail }}_${i}.json
+              --out live_${{ matrix.p_fail }}_${i}.json
             wait $CHAOS_PID || true
             echo "::endgroup::"
           done
@@ -111,34 +84,31 @@ jobs:
       - name: Summarize model vs live
         run: |
           python3 - << 'PY'
-          import json,glob,statistics,sys
-          p="${{ matrix.p_fail }}"; mode="${{ matrix.mode }}"
-          model=json.load(open(f"model_{mode}_{p}.json"))
-          vals=[]
-          for f in sorted(glob.glob(f"live_{mode}_{p}_*.json")):
-              vals.append(json.load(open(f))["R_live"])
-          summary={"mode":mode,"p_fail":float(p),
-                   "R_model":model["R_model"],
-                   "R_live_mean":(sum(vals)/len(vals)) if vals else None,
+          import json,glob,statistics
+          p="${{ matrix.p_fail }}"
+          model=json.load(open(f"model_{p}.json"))
+          vals=[json.load(open(f))["R_live"] for f in sorted(glob.glob(f"live_{p}_*.json"))]
+          summary={"p_fail":float(p),"R_model":model["R_model"],
+                   "R_live_mean":(sum(vals)/len(vals) if vals else None),
                    "R_live_sd":(statistics.pstdev(vals) if len(vals)>1 else 0.0),
                    "windows":len(vals)}
-          json.dump(summary, open(f"summary_{mode}_{p}.json","w"))
+          json.dump(summary, open(f"summary_{p}.json","w"))
           print(summary)
           PY
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: results_${{ matrix.mode }}_${{ matrix.p_fail }}
+          name: results_${{ matrix.p_fail }}
           path: |
             deps.json
             graph.json
             replicas.json
-            model_${{ matrix.mode }}_${{ matrix.p_fail }}.json
-            live_${{ matrix.mode }}_${{ matrix.p_fail }}_*.json
-            summary_${{ matrix.mode }}_${{ matrix.p_fail }}.json
+            model_${{ matrix.p_fail }}.json
+            live_${{ matrix.p_fail }}_*.json
+            summary_${{ matrix.p_fail }}.json
 
-      - name: Tear down (keep for postmortem if job fails)
+      - name: Tear down
         if: always()
         working-directory: vendor/opentelemetry-demo
         run: docker compose down -v
