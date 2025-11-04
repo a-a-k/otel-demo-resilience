@@ -10,7 +10,7 @@ a = ap.parse_args()
 raw = json.load(open(a.deps))
 
 # Accept list or {"data":[...]}
-data = raw.get("data", []) if isinstance(raw, dict) else (raw if is
+data = raw.get("data", []) if isinstance(raw, dict) else (raw if isinstance(raw, list) else [])
 
 SKIP = {
     "frontend-proxy","jaeger","grafana","otel-collector","zipkin",
