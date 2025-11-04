@@ -9,13 +9,8 @@ a = ap.parse_args()
 
 raw = json.load(open(a.deps))
 
-# Accept either [{"parent","child","callCount"}, ...] OR {"data":[...]}
-if isinstance(raw, dict):
-    data = raw.get("data", [])
-elif isinstance(raw, list):
-    data = raw
-else:
-    data = []
+# Accept list or {"data":[...]}
+data = raw.get("data", []) if isinstance(raw, dict) else (raw if is
 
 SKIP = {
     "frontend-proxy","jaeger","grafana","otel-collector","zipkin",
