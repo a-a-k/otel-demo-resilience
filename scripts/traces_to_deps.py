@@ -42,12 +42,12 @@ def discover_services():
         time.sleep(5)
     return []
 
-def fetch_edges(services):
+def fetch_edges(services, lookback_min=None, limit=1000):
     edges = {}
-    lookback_m = f"{max(1, LOOKBACK_MIN)}m"
+    lookback_m = f"{max(1, lookback_min if lookback_min is not None else LOOKBACK_MIN)}m"
     end_ms = int(time.time()*1000)
     for svc in services:
-        qs = f"service={urllib.parse.quote(svc)}&lookback={lookback_m}&end={end_ms}&limit=200"
+        qs = f"service={urllib.parse.quote(svc)}&lookback={lookback_m}&end={end_ms}&limit={int(limit)}"
         for b in BASES:
             try:
                 payload = get_json(f"{b}/traces?{qs}")
@@ -65,6 +65,7 @@ def fetch_edges(services):
                     name = (procs.get(pid) or {}).get("serviceName")
                     if name:
                         svc_by_span[sp.get("spanID")] = name
+                added = 0
                 # edges via references or parentSpanId
                 for sp in spans:
                     child = svc_by_span.get(sp.get("spanID"))
@@ -78,25 +79,61 @@ def fetch_edges(services):
                         parent = svc_by_span.get(sp.get("parentSpanId"))
                     if parent and child and parent != child:
                         edges[(parent, child)] = edges.get((parent, child), 0) + 1
+                        added += 1
+                # Fallback: if no cross-service references, infer by time-ordered service transitions
+                if added == 0 and spans:
+                    seq = []
+                    for sp in spans:
+                        svcname = svc_by_span.get(sp.get("spanID"))
+                        if not svcname:
+                            continue
+                        ts = sp.get("startTime") or sp.get("startTimeMillis") or sp.get("startTimeUnixNano") or 0
+                        try:
+                            ts = int(ts)
+                        except Exception:
+                            ts = 0
+                        seq.append((ts, svcname))
+                    if seq:
+                        seq.sort()
+                        # compress consecutive duplicates
+                        ordered = []
+                        last = None
+                        for _, sname in seq:
+                            if sname != last:
+                                ordered.append(sname)
+                                last = sname
+                        for i in range(len(ordered)-1):
+                            u, v = ordered[i], ordered[i+1]
+                            if u != v:
+                                edges[(u, v)] = edges.get((u, v), 0) + 1
             break  # next service after first base that returned
     return [{"parent": a, "child": b, "callCount": n} for (a, b), n in edges.items()]
 
 def main():
     svcs = discover_services()
+    # Fallback: try common OTel Demo backend services if /services is empty
     if not svcs:
-        print("[]")
-        sys.exit(1)
+        svcs = [
+            'checkoutservice','productcatalogservice','cartservice','paymentservice',
+            'recommendationservice','shippingservice','currencyservice','adservice',
+            'emailservice','fraudservice','accountingservice','frontend','frontend-proxy'
+        ]
     # Retry for a bounded timeout to wait for Jaeger indexing
     timeout = int(os.getenv("TRACES_TIMEOUT", "300"))
     deadline = time.time() + max(1, timeout)
+    widened = False
     while time.time() < deadline:
-        out = fetch_edges(svcs)
+        out = fetch_edges(svcs, lookback_min=None, limit=1000)
+        if not out and not widened and (deadline - time.time()) < timeout*0.5:
+            # Widen search window once if still empty: 60 minutes
+            widened = True
+            out = fetch_edges(svcs, lookback_min=max(LOOKBACK_MIN, 60), limit=1000)
         if out:
             print(json.dumps(out))
             return
         time.sleep(5)
     # Final attempt and fail if still empty
-    out = fetch_edges(svcs)
+    out = fetch_edges(svcs, lookback_min=max(LOOKBACK_MIN, 60), limit=1000)
     if out:
         print(json.dumps(out))
         return
