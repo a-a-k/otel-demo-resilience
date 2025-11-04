@@ -84,9 +84,12 @@ def main():
     svcs = discover_services()
     if not svcs:
         print("[]")
-        return
+        sys.exit(1)
     out = fetch_edges(svcs)
     print(json.dumps(out))
+    if not out:
+        # Fail fast if no edges were discovered
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

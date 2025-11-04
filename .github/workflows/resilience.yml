@@ -49,21 +49,7 @@ jobs:
 
       - name: Warm up & ensure trace traffic
         run: |
-          sleep "$WARMUP_SECONDS"
-          python3 - << 'PY'
-          import time,requests,sys,os
-          base=f"http://localhost:{os.getenv('ENVOY_PORT','8080')}/loadgen".rstrip("/")
-          ok=0
-          for _ in range(36):  # up to ~3 min
-              try:
-                  r=requests.get(base+"/stats/requests",timeout=6,allow_redirects=True)
-                  if "application/json" in (r.headers.get("content-type","")).lower():
-                      t=(r.json().get("stats_total") or {}).get("num_requests",0) or 0
-                      if t>0: ok=1; break
-              except Exception: pass
-              time.sleep(5)
-          sys.exit(0 if ok else 1)
-          PY
+          python3 scripts/warmup.py --locust "http://localhost:${ENVOY_PORT}/loadgen" --timeout 300
 
       - name: Build deps from traces (no /dependencies)
         run: |
@@ -146,8 +132,45 @@ jobs:
             model_${{ matrix.p_fail }}.json
             live_${{ matrix.p_fail }}_*.json
             summary_${{ matrix.p_fail }}.json
+            window_log.jsonl
 
       - name: Tear down
         if: always()
         working-directory: vendor/opentelemetry-demo
         run: docker compose down -v
+
+  report:
+    name: Quick report (aggregate)
+    needs: run
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: results_*
+          merge-multiple: true
+      - name: Print quick report and enforce monotonicity
+        run: |
+          python3 - << 'PY'
+          import glob, json, sys
+          sums = []
+          for f in sorted(glob.glob('summary_*.json')):
+              s = json.load(open(f))
+              sums.append((float(s['p_fail']), s['R_model'], s['R_live_mean'], s['R_live_sd'], s['windows']))
+          if len(sums) != 5:
+              print('Expected 5 summary_* files, got', len(sums), file=sys.stderr)
+              sys.exit(1)
+          sums.sort()
+          print('p\tR_model\tR_live_mean\tR_live_sd\tN')
+          ok = True
+          prev_rm = None
+          prev_rl = None
+          for p, rm, rl, sd, n in sums:
+              print(f"{p:.1f}\t{rm:.4f}\t{(rl or 0):.4f}\t{(sd or 0):.4f}\t{n}")
+              if prev_rm is not None and rm > prev_rm + 1e-9: ok = False
+              if prev_rl is not None and (rl or 0) > (prev_rl or 0) + 1e-9: ok = False
+              prev_rm, prev_rl = rm, rl
+          if not ok:
+              print('Monotonicity check failed: R_model and/or R_live_mean not non-increasing with p_fail', file=sys.stderr)
+              sys.exit(1)
+          PY
