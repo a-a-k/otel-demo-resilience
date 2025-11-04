@@ -3,6 +3,7 @@ set -euo pipefail
 P_FAIL="${1:?fraction like 0.3}"
 ALLOWLIST="${2:?services_allowlist.txt}"
 WINDOW="${3:-30}"
+PROJ="${COMPOSE_PROJECT_NAME:-$(basename vendor/opentelemetry-demo)}"
 
 # enumerate container names for allowed services
 mapfile -t CANDIDATES < <(

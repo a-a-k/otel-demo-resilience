@@ -42,20 +42,22 @@ def totals_json(base, prefix):
     fails = _json(f"{base}{prefix}/stats/failures") or []
     exc   = _json(f"{base}{prefix}/exceptions") or []
 
-    # total requests (prefer 'Total' row; else sum)
+    # total requests: prefer stats_total, else 'Total' row, else sum
     total = (stats.get("stats_total") or {}).get("num_requests", 0) or 0
+    items = (stats.get("stats") or [])
     for it in items:
         if it.get("name") == "Total":
             total = it.get("num_requests", 0); break
         total += it.get("num_requests", 0)
 
     # 5xx from failures list
-    five_xx = sum(f.get("occurrences", 0) for f in fails.get("failures", fails)
-                  if re.match(r"^5\d\d", str(f.get("error",""))))
+    flist = (fails.get("failures") if isinstance(fails, dict) else fails) or []
+    five_xx = sum((f.get("occurrences", 0) or 0) for f in flist
+                  if PAT_ERR_5XX.match(str(f.get("error", ""))))
     # transport/timeouts from exceptions
-    transport = sum(e.get("count", 0) for e in exc.get("exceptions", [])
-                    if re.search(r"(timeout|connection|reset|broken pipe|read timed out)",
-                                 str(e.get("msg","")), re.I))
+    elist = (exc.get("exceptions") if isinstance(exc, dict) else exc) or []
+    transport = sum((e.get("count", 0) or 0) for e in elist
+                    if PAT_TRANSPORT.search(str(e.get("msg",""))))
     return dict(total=total, five_xx=five_xx, transport=transport)
 
 def totals_csv(base, prefix):
