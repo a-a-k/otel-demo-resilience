@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import argparse, time, json, csv, io, re
 import requests as R
+PAT_ERR_5XX = re.compile(r"^5\d\d")
+PAT_TRANSPORT = re.compile(r"(timeout|connection|reset|broken pipe|read timed out)", re.I)
 
 HEADERS = {"Accept": "application/json"}
 
@@ -24,6 +26,7 @@ def _csv(url, timeout=6):
     return None
 
 def discover_base(base):
+    base = base.rstrip("/")
     # Try JSON first
     for prefix in ("", "/api", "/ui/api"):
         if _json(f"{base}{prefix}/stats/requests"):
@@ -36,12 +39,11 @@ def discover_base(base):
 
 def totals_json(base, prefix):
     stats = _json(f"{base}{prefix}/stats/requests") or {}
-    fails = _json(f"{base}{prefix}/stats/failures") or {"failures":[]}
-    exc   = _json(f"{base}{prefix}/exceptions") or {"exceptions":[]}
+    fails = _json(f"{base}{prefix}/stats/failures") or []
+    exc   = _json(f"{base}{prefix}/exceptions") or []
 
     # total requests (prefer 'Total' row; else sum)
-    items = stats.get("stats", [])
-    total = 0
+    total = (stats.get("stats_total") or {}).get("num_requests", 0) or 0
     for it in items:
         if it.get("name") == "Total":
             total = it.get("num_requests", 0); break
