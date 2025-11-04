@@ -23,15 +23,17 @@ SKIP = {
 }
 
 edges = []
+SKIP = {"frontend-proxy", "jaeger", "grafana", "otel-collector", "kafka", "kafka-server", "prometheus",
+        "loadgenerator", "zipkin"}
 for item in data:
     # tolerate aliases found in Jaeger deps/traces payloads
     parent = item.get("parent") or item.get("caller") or item.get("p")
     child  = item.get("child")  or item.get("callee") or item.get("c")
-    if not parent or not child:
-        continue
+    if norm(parent) in SKIP or norm(child) in SKIP: continue
     parent, child = str(parent), str(child)
     def norm(s): 
-        s=s.strip().lower().replace("_","-"); 
+        s=s.strip().lower().replace("_","-");
+        # scripts/deps_to_graph.py (inside the edge loop)
 
 def norm(s: str) -> str:
     s = s.strip().lower().replace("_", "-")

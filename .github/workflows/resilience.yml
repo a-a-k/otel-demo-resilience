@@ -102,6 +102,18 @@ jobs:
           print(summary)
           PY
 
+      - name: Print quick report
+        run: |
+          python3 - << 'PY'
+          import glob,json,statistics as S
+          rows=[]
+          for f in sorted(glob.glob("summary_*.json")):
+              s=json.load(open(f))
+              rows.append((s["p_fail"], s["R_model"], s["R_live_mean"], s["R_live_sd"], s["windows"]))
+          print("p\tR_model\tR_live_mean\tR_live_sd\twindows")
+          for p,rm,rl,sd,w in sorted(rows): print(f"{p:.1f}\t{rm:.4f}\t{(rl or 0):.4f}\t{sd:.4f}\t{w}")
+          PY
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
