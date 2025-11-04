@@ -45,17 +45,16 @@ def discover_services():
 def fetch_edges(services):
     edges = {}
     lookback_m = f"{max(1, LOOKBACK_MIN)}m"
+    end_ms = int(time.time()*1000)
     for svc in services:
-        qs = f"service={urllib.parse.quote(svc)}&lookback={lookback_m}&end={END_MS}&limit=200"
-        got_any = False
+        qs = f"service={urllib.parse.quote(svc)}&lookback={lookback_m}&end={end_ms}&limit=200"
         for b in BASES:
             try:
                 payload = get_json(f"{b}/traces?{qs}")
             except Exception:
                 continue
-            if not payload: 
+            if not payload:
                 continue
-            got_any = True
             for trace in payload.get("data", []):
                 procs = trace.get("processes", {})
                 spans = trace.get("spans", [])
@@ -64,32 +63,45 @@ def fetch_edges(services):
                 for sp in spans:
                     pid = sp.get("processID")
                     name = (procs.get(pid) or {}).get("serviceName")
-                    if name: svc_by_span[sp.get("spanID")] = name
+                    if name:
+                        svc_by_span[sp.get("spanID")] = name
                 # edges via references or parentSpanId
                 for sp in spans:
                     child = svc_by_span.get(sp.get("spanID"))
                     parent = None
                     for ref in sp.get("references", []):
-                        if ref.get("refType") in ("CHILD_OF","FOLLOWS_FROM"):
+                        if ref.get("refType") in ("CHILD_OF", "FOLLOWS_FROM"):
                             parent = svc_by_span.get(ref.get("spanID"))
-                            if parent: break
+                            if parent:
+                                break
                     if not parent and sp.get("parentSpanId"):
                         parent = svc_by_span.get(sp.get("parentSpanId"))
                     if parent and child and parent != child:
                         edges[(parent, child)] = edges.get((parent, child), 0) + 1
             break  # next service after first base that returned
-    return [{"parent":a, "child":b, "callCount":n} for (a,b),n in edges.items()]
+    return [{"parent": a, "child": b, "callCount": n} for (a, b), n in edges.items()]
 
 def main():
     svcs = discover_services()
     if not svcs:
         print("[]")
         sys.exit(1)
+    # Retry for a bounded timeout to wait for Jaeger indexing
+    timeout = int(os.getenv("TRACES_TIMEOUT", "300"))
+    deadline = time.time() + max(1, timeout)
+    while time.time() < deadline:
+        out = fetch_edges(svcs)
+        if out:
+            print(json.dumps(out))
+            return
+        time.sleep(5)
+    # Final attempt and fail if still empty
     out = fetch_edges(svcs)
-    print(json.dumps(out))
-    if not out:
-        # Fail fast if no edges were discovered
-        sys.exit(1)
+    if out:
+        print(json.dumps(out))
+        return
+    print("[]")
+    sys.exit(1)
 
 if __name__ == "__main__":
     main()
