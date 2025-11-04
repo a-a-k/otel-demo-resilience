@@ -30,19 +30,34 @@ for item in data:
         s=s.strip().lower().replace("_","-");
         # scripts/deps_to_graph.py (inside the edge loop)
 
+SKIP = {
+    "frontend-proxy","frontend","jaeger","grafana","otel-collector","zipkin",
+    "kafka","kafka-server","prometheus","loadgenerator"
+}
+
 def norm(s: str) -> str:
     s = s.strip().lower().replace("_", "-")
     for suf in ("-service", "service"):  # normalize common suffixes
         if s.endswith(suf): s = s[: -len(suf)]
     return s
 
+edges = []
+for item in data:
+    parent = item.get("parent") or item.get("caller") or item.get("p")
+    child  = item.get("child")  or item.get("callee") or item.get("c")
+    if not parent or not child: 
+        continue
+    pu, pv = norm(str(parent)), norm(str(child))
+    if pu in SKIP or pv in SKIP: 
+        continue
+    edges.append((pu, pv))
+
 # build node index
-Vset = {norm(u) for u, v in edges} | {norm(v) for u, v in edges}
-V = sorted(Vset)
+V = sorted({u for u, v in edges} | {v for u, v in edges})
 idx = {v: i for i, v in enumerate(V)}
 
 # unique directed edges on normalized ids
-E = sorted({(idx[norm(u)], idx[norm(v)]) for u, v in edges})
+E = sorted({(idx[u], idx[v]) for u, v in edges})
 
 # entrypoints → ids (ignore missing ones gracefully)
 entry = [norm(x) for x in open(a.entrypoints) if x.strip() and not x.startswith("#")]

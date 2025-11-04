@@ -48,12 +48,29 @@ jobs:
           bash ../../scripts/wait_http.sh "http://localhost:${ENVOY_PORT}/loadgen/" 180
 
       - name: Warm up & ensure trace traffic
-        run: sleep "$WARMUP_SECONDS"
+        run: |
+          sleep "$WARMUP_SECONDS"
+          python3 - << 'PY'
+          import time,requests,sys,os
+          base=f"http://localhost:{os.getenv('ENVOY_PORT','8080')}/loadgen".rstrip("/")
+          ok=0
+          for _ in range(36):  # up to ~3 min
+              try:
+                  r=requests.get(base+"/stats/requests",timeout=6,allow_redirects=True)
+                  if "application/json" in (r.headers.get("content-type","")).lower():
+                      t=(r.json().get("stats_total") or {}).get("num_requests",0) or 0
+                      if t>0: ok=1; break
+              except Exception: pass
+              time.sleep(5)
+          sys.exit(0 if ok else 1)
+          PY
 
-      - name: Export graph from traces (deps.json)
+      - name: Build deps from traces (no /dependencies)
         run: |
           python3 scripts/traces_to_deps.py > deps.json
-          test -s deps.json || (echo "deps.json empty"; exit 1)
+          test -s deps.json
+          # Must have at least one edge
+          [ "$(jq 'length' deps.json)" -gt 0 ] || (echo "deps.json empty" >&2; exit 1)
 
       - name: Build graph.json (deps → G)
         run: |
@@ -61,6 +78,10 @@ jobs:
             --deps deps.json \
             --entrypoints config/entrypoints.txt \
             --out graph.json
+          head -c 800 graph.json || true
+          # Non-empty graph check
+          [ "$(jq '.edges|length' graph.json)" -gt 0 ]
+          
 
       - name: Measure replicas (actual Compose)
         run: bash scripts/read_replicas.sh > replicas.json
