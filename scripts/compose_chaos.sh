@@ -3,6 +3,7 @@ set -euo pipefail
 P_FAIL="${1:?fraction like 0.3}"
 ALLOWLIST="${2:?services_allowlist.txt}"
 WINDOW="${3:-30}"
+LOG_FILE="${4:-window_log.jsonl}"
 PROJ="${COMPOSE_PROJECT_NAME:-$(basename vendor/opentelemetry-demo)}"
 
 INFRA_RE='(frontend|frontend-proxy|jaeger|grafana|otel-collector|loadgenerator|prometheus|kafka|zipkin)$'
@@ -56,9 +57,10 @@ else
 fi
 
 # Log window summary (always)
-python3 - <<'PY' "$P_FAIL" "$WINDOW" >> window_log.jsonl
+python3 - <<'PY' "$P_FAIL" "$WINDOW" "$LOG_FILE"
 import sys, subprocess, json, os
 p=float(sys.argv[1]); win=int(sys.argv[2])
+log=sys.argv[3]
 names=[]
 try:
     with open('/tmp/killset.txt') as f:
@@ -74,13 +76,14 @@ for n in names:
         if s: svcs.add(s)
     except Exception:
         pass
-print(json.dumps({
-  'p_fail': p,
-  'eligible': int(os.environ.get('TOTAL','0')),
-  'killed': len(names),
-  'services': sorted(svcs),
-  'window_s': win
-}))
+with open(log, "a") as fh:
+    fh.write(json.dumps({
+      'p_fail': p,
+      'eligible': int(os.environ.get('TOTAL','0')),
+      'killed': len(names),
+      'services': sorted(svcs),
+      'window_s': win
+    }) + "\n")
 PY
 
 # Execute chaos (graceful stop/start only if K>0)

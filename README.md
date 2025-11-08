@@ -31,6 +31,7 @@ Artifacts per cell:
 ## Notes
 - We **keep the demo’s Locust** load generator. We compute `R_live = 1 - (5xx + transport errors + timeouts)/total` by reading Locust’s stats & exceptions endpoints and counting server-side (5xx) and transport-level errors.  
 - Discovery prefers scraping **Jaeger traces** with `scripts/traces_to_deps.py`; if indexing is still empty it automatically falls back to the `/jaeger/api/dependencies` endpoint.
+- CI bumps Locust’s default load (`LOCUST_USERS=150`, `LOCUST_SPAWN_RATE=30`) and runs `scripts/validate_chaos_live.py` up front to prove that chaos actually kills containers and that Locust reports errors (`validation_*.json` are uploaded as artifacts).
 - Chaos is implemented as **random container stops** for a fixed window, then automatic restarts, to match a fail‑stop assumption.
 
 See `config/services_allowlist.txt` to decide which app services are eligible for kills; infra (proxy, collector, jaeger, grafana, db/brokers) is excluded by default.

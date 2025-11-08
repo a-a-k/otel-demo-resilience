@@ -22,6 +22,9 @@ jobs:
       WINDOWS: "12"
       SAMPLES: "120000"
       OTEL_DEMO_REF: "main"
+      VALIDATION_WINDOW_SECONDS: "45"
+      LOCUST_USERS: "150"
+      LOCUST_SPAWN_RATE: "30"
 
     steps:
       - uses: actions/checkout@v4
@@ -50,6 +53,18 @@ jobs:
       - name: Warm up & ensure trace traffic
         run: |
           python3 scripts/warmup.py --locust "http://localhost:${ENVOY_PORT}/loadgen" --timeout 300
+
+      - name: Validate chaos + live measurement
+        run: |
+          python3 scripts/validate_chaos_live.py \
+            --locust "http://localhost:${ENVOY_PORT}/loadgen" \
+            --allowlist config/services_allowlist.txt \
+            --window "${VALIDATION_WINDOW_SECONDS}" \
+            --log validation_window_log.jsonl \
+            --live validation_live.json \
+            --summary validation_summary.json \
+            --min-kills 1 \
+            --max-live 0.99
 
       - name: Build deps from traces (no /dependencies)
         run: |
@@ -133,6 +148,9 @@ jobs:
             live_${{ matrix.p_fail }}_*.json
             summary_${{ matrix.p_fail }}.json
             window_log.jsonl
+            validation_summary.json
+            validation_live.json
+            validation_window_log.jsonl
 
       - name: Tear down
         if: always()
