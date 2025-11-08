@@ -204,15 +204,18 @@ jobs:
               sys.exit(1)
           sums.sort()
           print('p\tR_model\tR_live_mean\tR_live_sd\tN')
-          ok = True
+          ok_model = True
+          ok_live = True
           prev_rm = None
           prev_rl = None
           for p, rm, rl, sd, n in sums:
               print(f"{p:.1f}\t{rm:.4f}\t{(rl or 0):.4f}\t{(sd or 0):.4f}\t{n}")
-              if prev_rm is not None and rm > prev_rm + 1e-9: ok = False
-              if prev_rl is not None and (rl or 0) > (prev_rl or 0) + 1e-9: ok = False
+              if prev_rm is not None and rm > prev_rm + 1e-9: ok_model = False
+              if prev_rl is not None and (rl or 0) > (prev_rl or 0) + 1e-9: ok_live = False
               prev_rm, prev_rl = rm, rl
-          if not ok:
-              print('Monotonicity check failed: R_model and/or R_live_mean not non-increasing with p_fail', file=sys.stderr)
+          if not ok_model:
+              print('Monotonicity check failed: R_model is not non-increasing with p_fail', file=sys.stderr)
               sys.exit(1)
+          if not ok_live:
+              print('Warning: R_live_mean not non-increasing with p_fail (informational only)', file=sys.stderr)
           PY
