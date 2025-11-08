@@ -22,7 +22,13 @@ jobs:
       WINDOWS: "12"
       SAMPLES: "120000"
       OTEL_DEMO_REF: "main"
-      VALIDATION_WINDOW_SECONDS: "45"
+      VALIDATION_WINDOW_SECONDS: "60"
+      VALIDATION_COLLECT_WINDOW_SECONDS: "60"
+      VALIDATION_COLLECT_DELAY_SECONDS: "15"
+      VALIDATION_MIN_TOTAL: "200"
+      VALIDATION_MAX_ATTEMPTS: "3"
+      VALIDATION_RETRY_SLEEP: "5"
+      VALIDATION_MAX_LIVE: "0.99"
       LOCUST_USERS: "150"
       LOCUST_SPAWN_RATE: "30"
 
@@ -60,11 +66,16 @@ jobs:
             --locust "http://localhost:${ENVOY_PORT}/loadgen" \
             --allowlist config/services_allowlist.txt \
             --window "${VALIDATION_WINDOW_SECONDS}" \
+            --collect-window "${VALIDATION_COLLECT_WINDOW_SECONDS}" \
+            --collect-delay "${VALIDATION_COLLECT_DELAY_SECONDS}" \
             --log validation_window_log.jsonl \
             --live validation_live.json \
             --summary validation_summary.json \
             --min-kills 1 \
-            --max-live 0.99
+            --min-total "${VALIDATION_MIN_TOTAL}" \
+            --max-attempts "${VALIDATION_MAX_ATTEMPTS}" \
+            --retry-sleep "${VALIDATION_RETRY_SLEEP}" \
+            --max-live "${VALIDATION_MAX_LIVE}"
 
       - name: Build deps from traces (no /dependencies)
         run: |
