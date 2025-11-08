@@ -89,6 +89,10 @@ def main():
             if args.collect_delay > 0:
                 time.sleep(args.collect_delay)
             subprocess.run(collect_cmd, check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"[validation] collect_live.py failed (attempt {attempt}): {e}", file=sys.stderr)
+            chaos_proc.wait()
+            return None
         finally:
             chaos_rc = chaos_proc.wait()
             if chaos_rc != 0:
@@ -126,7 +130,11 @@ def main():
     for attempt in range(1, args.max_attempts + 1):
         summary = run_attempt(attempt)
         if not summary:
-            return 1
+            if attempt >= args.max_attempts:
+                print("[validation] giving up after repeated collect failures", file=sys.stderr)
+                return 1
+            time.sleep(max(0, args.retry_sleep))
+            continue
         killed = summary["killed"]
         eligible = summary["eligible"]
         detail = summary.get("detail") or {}

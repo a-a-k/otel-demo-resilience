@@ -25,16 +25,18 @@ def _csv(url, timeout=6):
         pass
     return None
 
-def discover_base(base):
+def discover_base(base, attempts=5, sleep_s=2):
     base = base.rstrip("/")
-    # Try JSON first
-    for prefix in ("", "/api", "/ui/api"):
-        if _json(f"{base}{prefix}/stats/requests"):
-            return (prefix, "json")
-    # Fall back to CSV endpoints
-    for prefix in ("", "/api", "/ui/api"):
-        if _csv(f"{base}{prefix}/stats/requests/csv"):
-            return (prefix, "csv")
+    for _ in range(max(1, attempts)):
+        # Try JSON first
+        for prefix in ("", "/api", "/ui/api"):
+            if _json(f"{base}{prefix}/stats/requests"):
+                return (prefix, "json")
+        # Fall back to CSV endpoints
+        for prefix in ("", "/api", "/ui/api"):
+            if _csv(f"{base}{prefix}/stats/requests/csv"):
+                return (prefix, "csv")
+        time.sleep(max(0.5, sleep_s))
     raise RuntimeError("Locust endpoints not reachable as JSON or CSV")
 
 def totals_json(base, prefix):
