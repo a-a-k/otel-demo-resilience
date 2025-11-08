@@ -1,21 +1,6 @@
 #!/usr/bin/env python3
-import json, argparse, random, collections
-
-def bfs_ok(adj, alive, s):
-    from collections import deque
-    if not alive[s]: 
-        return False
-    q, seen = deque([s]), {s}
-    ok = False
-    while q:
-        u = q.popleft()
-        outs = [v for v in adj[u] if alive[v]]
-        if not outs:
-            ok = True
-        for v in outs:
-            if v not in seen:
-                seen.add(v); q.append(v)
-    return ok
+import json, argparse, random
+from collections import deque
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--graph", required=True)
@@ -29,8 +14,24 @@ G = json.load(open(a.graph))
 V = G["services"]; E = G["edges"]; entry = G["entrypoints"]
 replicas = json.load(open(a.replicas))
 
-adj = collections.defaultdict(list)
-for u,v in E: adj[u].append(v)
+adj = [[] for _ in range(len(V))]
+for u,v in E:
+    adj[u].append(v)
+sinks = [len(adj[i]) == 0 for i in range(len(V))]
+
+def bfs_ok(alive, start):
+    if start >= len(alive) or not alive[start]:
+        return False
+    q, seen = deque([start]), {start}
+    while q:
+        u = q.popleft()
+        if sinks[u]:
+            return True
+        for v in adj[u]:
+            if alive[v] and v not in seen:
+                seen.add(v)
+                q.append(v)
+    return False
 
 def draw_alive():
     alive = [False]*len(V)
@@ -45,7 +46,7 @@ def draw_alive():
 succ = 0
 for _ in range(a.samples):
     alive = draw_alive()
-    ok_any = any(bfs_ok(adj, alive, e) for e in entry)
+    ok_any = any(bfs_ok(alive, e) for e in entry)
     succ += 1 if ok_any else 0
 
 R_model = succ / a.samples
