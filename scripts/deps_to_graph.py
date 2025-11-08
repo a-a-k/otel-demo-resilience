@@ -19,7 +19,7 @@ else:
 
 # Infra/async to prune from synchronous service graph
 SKIP = {
-    "frontend-proxy", "frontend", "jaeger", "grafana", "otel-collector", "zipkin",
+    "frontend-proxy", "jaeger", "grafana", "otel-collector", "zipkin",
     "kafka", "kafka-server", "prometheus", "loadgenerator"
 }
 
@@ -30,6 +30,13 @@ def norm(s: str) -> str:
             s = s[: -len(suf)]
     return s
 
+entry = [
+    norm(x)
+    for x in open(a.entrypoints)
+    if x.strip() and not x.startswith("#")
+]
+ENTRY_ALLOW = set(entry)
+
 edges = []
 for item in data:
     # tolerate aliases found in Jaeger deps/traces payloads
@@ -38,7 +45,7 @@ for item in data:
     if not parent or not child:
         continue
     pu, pv = norm(parent), norm(child)
-    if pu in SKIP or pv in SKIP:
+    if (pu in SKIP and pu not in ENTRY_ALLOW) or (pv in SKIP and pv not in ENTRY_ALLOW):
         continue
     if pu == pv:
         continue
@@ -52,7 +59,6 @@ idx = {v: i for i, v in enumerate(V)}
 E = sorted({(idx[u], idx[v]) for u, v in edges})
 
 # entrypoints → ids (ignore missing ones gracefully)
-entry = [norm(x) for x in open(a.entrypoints) if x.strip() and not x.startswith("#")]
 entry_ids = [idx[e] for e in entry if e in idx]
 
 graph = {"services": V, "edges": E, "entrypoints": entry_ids}
