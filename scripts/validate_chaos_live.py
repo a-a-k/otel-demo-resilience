@@ -157,12 +157,19 @@ def main():
             time.sleep(max(0, args.retry_sleep))
             continue
         if r_live > args.max_live:
+            if attempt >= args.max_attempts:
+                print(
+                    f"Validation failed: R_live={r_live:.4f} exceeds threshold {args.max_live} after {attempt} attempts",
+                    file=sys.stderr,
+                )
+                final_summary = summary
+                break
             print(
-                f"Validation failed: R_live={r_live:.4f} exceeds threshold {args.max_live}",
+                f"[validation] attempt {attempt}: R_live={r_live:.4f} > max_live={args.max_live}, retrying...",
                 file=sys.stderr,
             )
-            final_summary = summary
-            break
+            time.sleep(max(0, args.retry_sleep))
+            continue
         final_summary = summary
         break
 
