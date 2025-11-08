@@ -11,6 +11,8 @@ import json
 import subprocess
 import sys
 import time
+import threading
+import urllib.request
 from pathlib import Path
 
 
@@ -51,6 +53,12 @@ def main():
                     help="Retry chaos+measurement if traffic stays below min-total.")
     ap.add_argument("--retry-sleep", type=int, default=5,
                     help="Seconds to sleep between attempts when re-trying.")
+    ap.add_argument("--probe-url", default="http://localhost:8080/",
+                    help="Optional HTTP endpoint to probe during chaos; empty string disables probing.")
+    ap.add_argument("--probe-interval", type=float, default=1.0,
+                    help="Seconds between HTTP probe requests.")
+    ap.add_argument("--min-probe-failures", type=int, default=1,
+                    help="If at least this many probe requests fail, validation succeeds even if R_live stays high.")
     args = ap.parse_args()
 
     log_path = Path(args.log)
@@ -60,6 +68,22 @@ def main():
     for path in (log_path, live_path, summary_path):
         if path.exists():
             path.unlink()
+
+    def http_probe(url, duration, interval, out):
+        end = time.monotonic() + duration
+        total = fail = 0
+        interval = max(0.1, interval)
+        while time.monotonic() < end:
+            total += 1
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "chaos-validator"})
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    resp.read(1)
+            except Exception:
+                fail += 1
+            time.sleep(interval)
+        out["probe_total"] = total
+        out["probe_fail"] = fail
 
     def run_attempt(attempt: int):
         before = len(read_json_lines(log_path))
@@ -85,6 +109,15 @@ def main():
 
         print(f"[validation] attempt {attempt}: chaos window={args.window}s delay={args.collect_delay}s collect_window={collect_window}s", file=sys.stderr)
         chaos_proc = subprocess.Popen(chaos_cmd)
+        probe_result = {"probe_total": 0, "probe_fail": 0}
+        probe_thread = None
+        if args.probe_url:
+            probe_thread = threading.Thread(
+                target=http_probe,
+                args=(args.probe_url, collect_window, args.probe_interval, probe_result),
+                daemon=True,
+            )
+            probe_thread.start()
         try:
             if args.collect_delay > 0:
                 time.sleep(args.collect_delay)
@@ -97,6 +130,8 @@ def main():
             chaos_rc = chaos_proc.wait()
             if chaos_rc != 0:
                 print(f"compose_chaos.sh exited with {chaos_rc}", file=sys.stderr)
+            if probe_thread:
+                probe_thread.join(timeout=collect_window + 5)
 
         entries = read_json_lines(log_path)
         new_entries = entries[before:]
@@ -118,11 +153,14 @@ def main():
             "min_kills": args.min_kills,
             "max_live": args.max_live,
             "min_total": args.min_total,
+            "min_probe_failures": args.min_probe_failures,
             "eligible": int(last.get("eligible") or 0),
             "killed": int(last.get("killed") or 0),
             "services": last.get("services"),
             "R_live": r_live,
             "detail": live.get("detail"),
+            "probe_total": probe_result.get("probe_total", 0),
+            "probe_fail": probe_result.get("probe_fail", 0),
         }
         return summary
 
@@ -140,6 +178,8 @@ def main():
         detail = summary.get("detail") or {}
         total = int(detail.get("total") or 0)
         r_live = summary["R_live"]
+        probe_fail = summary.get("probe_fail", 0)
+        probe_ok = (args.min_probe_failures <= 0) or (probe_fail >= args.min_probe_failures)
 
         if eligible <= 0:
             print("Validation failed: no eligible services detected for chaos", file=sys.stderr)
@@ -150,7 +190,7 @@ def main():
                 file=sys.stderr,
             )
             return 1
-        if total < args.min_total:
+        if total < args.min_total and not probe_ok:
             if attempt >= args.max_attempts:
                 print(
                     f"Validation failed: Locust total {total} < min_total {args.min_total} after {attempt} attempts",
@@ -164,7 +204,7 @@ def main():
             )
             time.sleep(max(0, args.retry_sleep))
             continue
-        if r_live > args.max_live:
+        if r_live > args.max_live and not probe_ok:
             if attempt >= args.max_attempts:
                 print(
                     f"Validation failed: R_live={r_live:.4f} exceeds threshold {args.max_live} after {attempt} attempts",
@@ -191,9 +231,11 @@ def main():
 
     detail = final_summary.get("detail") or {}
     total = int(detail.get("total") or 0)
-    if total < args.min_total:
+    probe_fail = final_summary.get("probe_fail", 0)
+    probe_ok = (args.min_probe_failures <= 0) or (probe_fail >= args.min_probe_failures)
+    if total < args.min_total and not probe_ok:
         return 1
-    if final_summary["R_live"] > args.max_live:
+    if final_summary["R_live"] > args.max_live and not probe_ok:
         return 1
     if final_summary["killed"] < args.min_kills or final_summary["eligible"] <= 0:
         return 1

@@ -29,6 +29,9 @@ jobs:
       VALIDATION_MAX_ATTEMPTS: "3"
       VALIDATION_RETRY_SLEEP: "5"
       VALIDATION_MAX_LIVE: "0.99"
+      VALIDATION_PROBE_URL: "http://localhost:8080/"
+      VALIDATION_PROBE_INTERVAL: "1"
+      VALIDATION_MIN_PROBE_FAILURES: "1"
       LOCUST_USERS: "150"
       LOCUST_SPAWN_RATE: "30"
 
@@ -75,7 +78,10 @@ jobs:
             --min-total "${VALIDATION_MIN_TOTAL}" \
             --max-attempts "${VALIDATION_MAX_ATTEMPTS}" \
             --retry-sleep "${VALIDATION_RETRY_SLEEP}" \
-            --max-live "${VALIDATION_MAX_LIVE}"
+            --max-live "${VALIDATION_MAX_LIVE}" \
+            --probe-url "${VALIDATION_PROBE_URL}" \
+            --probe-interval "${VALIDATION_PROBE_INTERVAL}" \
+            --min-probe-failures "${VALIDATION_MIN_PROBE_FAILURES}"
 
       - name: Build deps from traces (no /dependencies)
         run: |
