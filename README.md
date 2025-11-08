@@ -30,7 +30,7 @@ Artifacts per cell:
 
 ## Notes
 - We **keep the demo’s Locust** load generator. We compute `R_live = 1 - (5xx + transport errors + timeouts)/total` by reading Locust’s stats & exceptions endpoints and counting server-side (5xx) and transport-level errors.  
-- Discovery uses **Jaeger Dependencies** via the frontend proxy: `http://localhost:8080/jaeger/api/dependencies?endTs=...&lookback=...`.
+- Discovery prefers scraping **Jaeger traces** with `scripts/traces_to_deps.py`; if indexing is still empty it automatically falls back to the `/jaeger/api/dependencies` endpoint.
 - Chaos is implemented as **random container stops** for a fixed window, then automatic restarts, to match a fail‑stop assumption.
 
 See `config/services_allowlist.txt` to decide which app services are eligible for kills; infra (proxy, collector, jaeger, grafana, db/brokers) is excluded by default.
