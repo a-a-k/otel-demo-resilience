@@ -233,12 +233,12 @@ def main():
     total = int(detail.get("total") or 0)
     probe_fail = final_summary.get("probe_fail", 0)
     probe_ok = (args.min_probe_failures <= 0) or (probe_fail >= args.min_probe_failures)
-    if total < args.min_total and not probe_ok:
-        return 1
-    if final_summary["R_live"] > args.max_live and not probe_ok:
-        return 1
     if final_summary["killed"] < args.min_kills or final_summary["eligible"] <= 0:
         return 1
+    if (total < args.min_total) and not probe_ok:
+        return 2
+    if (final_summary["R_live"] > args.max_live) and not probe_ok:
+        return 2
     return 0
 
 

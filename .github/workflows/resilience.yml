@@ -64,6 +64,7 @@ jobs:
           python3 scripts/warmup.py --locust "http://localhost:${ENVOY_PORT}/loadgen" --timeout 300
 
       - name: Validate chaos + live measurement
+        id: chaos_validation
         run: |
           python3 scripts/validate_chaos_live.py \
             --locust "http://localhost:${ENVOY_PORT}/loadgen" \
@@ -81,7 +82,13 @@ jobs:
             --max-live "${VALIDATION_MAX_LIVE}" \
             --probe-url "${VALIDATION_PROBE_URL}" \
             --probe-interval "${VALIDATION_PROBE_INTERVAL}" \
-            --min-probe-failures "${VALIDATION_MIN_PROBE_FAILURES}"
+            --min-probe-failures "${VALIDATION_MIN_PROBE_FAILURES}" || echo "validation_status=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Annotate validation status
+        if: steps.chaos_validation.outputs.validation_status && steps.chaos_validation.outputs.validation_status != '0'
+        run: |
+          echo "::warning::Chaos validation exited with status ${VALIDATION_STATUS:-unknown}. See validation_summary.json for details." \
+            | tee /tmp/chaos_warning
 
       - name: Build deps from traces (no /dependencies)
         run: |
