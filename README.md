@@ -29,9 +29,10 @@ Artifacts per cell:
 - `summary_<mode>_<p>.json` – aggregate (mean/sd).
 
 ## Notes
-- We **keep the demo’s Locust** load generator. We compute `R_live = 1 - (5xx + transport errors + timeouts)/total` by reading Locust’s stats & exceptions endpoints and counting server-side (5xx) and transport-level errors.  
+- We **keep the demo’s Locust** load generator. `R_live = 1 - (5xx + transport errors + Locust #failures)/total`, а ещё окно автоматически считается проваленным при нулевом трафике или p95 латентности ≥1.5 с (см. `scripts/collect_live.py`).  
 - Discovery prefers scraping **Jaeger traces** with `scripts/traces_to_deps.py`; if indexing is still empty it automatically falls back to the `/jaeger/api/dependencies` endpoint.
 - CI bumps Locust’s default load (`LOCUST_USERS=150`, `LOCUST_SPAWN_RATE=30`) and runs `scripts/validate_chaos_live.py` up front (60 s chaos window с задержкой 15 с, HTTP-пробник фронтенда, несколько попыток до ≥80 запросов **или** хотя бы одной неудачной HTTP-проверки при `R_live ≤ 0.99`) — это подтверждает, что контейнеры реально глушатся; итоги попадают в `validation_*.json`.
+- Основной цикл хаоса использует 60‑секундные окна, даёт 15 с на “раскрытие” отказа и только после этого снимает 40‑секундное окно `collect_live.py`, чтобы измерения всегда приходились на период простоя сервисов.
 - В итоговом отчёте GitHub Actions строго контролируется монотонность только для `R_model`; `R_live_mean` выводится для информации и может “прыгать” (например, если хаос не ловится загрузкой).
 - Chaos is implemented as **random container stops** for a fixed window, then automatic restarts, to match a fail‑stop assumption.
 

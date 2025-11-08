@@ -43,9 +43,10 @@ def totals_json(base, prefix):
     stats = _json(f"{base}{prefix}/stats/requests") or {}
     fails = _json(f"{base}{prefix}/stats/failures") or []
     exc   = _json(f"{base}{prefix}/exceptions") or []
+    stats_total = (stats.get("stats_total") or {})
 
     # total requests: prefer stats_total, else 'Total' row, else sum
-    total = (stats.get("stats_total") or {}).get("num_requests", 0) or 0
+    total = stats_total.get("num_requests", 0) or 0
     items = (stats.get("stats") or [])
     for it in items:
         if it.get("name") == "Total":
@@ -60,7 +61,10 @@ def totals_json(base, prefix):
     elist = (exc.get("exceptions") if isinstance(exc, dict) else exc) or []
     transport = sum((e.get("count", 0) or 0) for e in elist
                     if PAT_TRANSPORT.search(str(e.get("msg",""))))
-    return dict(total=total, five_xx=five_xx, transport=transport)
+    failures = stats_total.get("num_failures", 0) or 0
+    p95 = float(stats_total.get("current_response_time_percentile_95") or stats_total.get("response_time_percentile_95") or 0)
+    median = float(stats_total.get("median_response_time") or 0)
+    return dict(total=total, five_xx=five_xx, transport=transport, failures=failures), {"p95": p95, "median": median}
 
 def totals_csv(base, prefix):
     req_rows = _csv(f"{base}{prefix}/stats/requests/csv") or []
@@ -69,12 +73,29 @@ def totals_csv(base, prefix):
 
     # requests.csv has '# requests' and '# failures'; prefer 'Total' row if present
     total = 0
+    failures = 0
+    median = 0.0
+    p95 = 0.0
     for r in req_rows:
         name = (r.get("Name") or r.get("name") or "").strip()
         num = int(float(r.get("# requests") or r.get("Requests") or 0))
+        fail = int(float(r.get("# failures") or r.get("Failures") or 0))
         if name.lower() == "total":
-            total = num; break
+            total = num
+            failures = fail
+            try:
+                median = float(r.get("Median") or r.get("median") or median)
+                p95 = float(r.get("95%") or r.get("95%ile") or p95)
+            except Exception:
+                pass
+            break
         total += num
+        failures += fail
+        try:
+            median = float(r.get("Median") or r.get("median") or median)
+            p95 = float(r.get("95%") or r.get("95%ile") or p95)
+        except Exception:
+            pass
 
     five_xx = 0
     for f in fail_rows:
@@ -89,7 +110,7 @@ def totals_csv(base, prefix):
         if re.search(r"(timeout|connection|reset|broken pipe|read timed out)", msg, re.I):
             transport += cnt
 
-    return dict(total=total, five_xx=five_xx, transport=transport)
+    return dict(total=total, five_xx=five_xx, transport=transport, failures=failures), {"p95": p95, "median": median}
 
 def snapshot(base):
     prefix, mode = discover_base(base)
@@ -104,18 +125,36 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--locust", required=True)    # e.g., http://localhost:8080/loadgen
     ap.add_argument("--window", type=int, default=30)
+    ap.add_argument("--latency-p95-threshold", type=float, default=1500.0,
+                    help="If latest 95th percentile latency (ms) exceeds this, mark window unhealthy.")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
-    s0 = snapshot(a.locust)
+    counters0, _ = snapshot(a.locust)
     time.sleep(max(1, a.window))
-    s1 = snapshot(a.locust)
-    d = diff(s0, s1)
+    counters1, meta1 = snapshot(a.locust)
+    # remove latency/meta keys from counters if present accidentally
+    d = diff(counters0, counters1)
 
-    bad = d["five_xx"] + d["transport"]
+    failures_other = max(0, d.get("failures", 0) - d.get("five_xx", 0))
+    bad = d.get("five_xx", 0) + d.get("transport", 0) + failures_other
     good = max(0, d["total"] - bad)
     R_live = (good / d["total"]) if d["total"] else 0.0
+    latency_bad = False
+    if meta1.get("p95", 0) >= a.latency_p95_threshold:
+        latency_bad = True
+        R_live = 0.0
+    zero_traffic = d["total"] <= 0
+    if zero_traffic:
+        R_live = 0.0
 
-    out = {"R_live": R_live, "detail": d}
+    detail = dict(d)
+    detail["failures_other"] = failures_other
+    detail["latency_p95"] = meta1.get("p95")
+    detail["latency_median"] = meta1.get("median")
+    detail["latency_bad"] = latency_bad
+    detail["zero_traffic"] = zero_traffic
+
+    out = {"R_live": R_live, "detail": detail}
     with open(a.out, "w") as f: json.dump(out, f)
     print(json.dumps(out))

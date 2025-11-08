@@ -53,6 +53,8 @@ def main():
                     help="Retry chaos+measurement if traffic stays below min-total.")
     ap.add_argument("--retry-sleep", type=int, default=5,
                     help="Seconds to sleep between attempts when re-trying.")
+    ap.add_argument("--latency-p95-threshold", type=float, default=1500.0,
+                    help="Threshold passed to collect_live.py for marking latency-based failures.")
     ap.add_argument("--probe-url", default="http://localhost:8080/",
                     help="Optional HTTP endpoint to probe during chaos; empty string disables probing.")
     ap.add_argument("--probe-interval", type=float, default=1.0,
@@ -103,6 +105,8 @@ def main():
             args.locust,
             "--window",
             str(collect_window),
+            "--latency-p95-threshold",
+            str(args.latency_p95_threshold),
             "--out",
             str(live_path),
         ]

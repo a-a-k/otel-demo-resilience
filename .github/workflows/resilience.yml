@@ -18,7 +18,10 @@ jobs:
       ENVOY_PORT: "8080"
       LOOKBACK_MINUTES: "30"
       WARMUP_SECONDS: "120"
-      WINDOW_SECONDS: "30"
+      CHAOS_WINDOW_SECONDS: "60"
+      CHAOS_MEASURE_DELAY_SECONDS: "15"
+      CHAOS_MEASURE_WINDOW_SECONDS: "40"
+      LATENCY_P95_THRESHOLD_MS: "1500"
       WINDOWS: "12"
       SAMPLES: "120000"
       OTEL_DEMO_REF: "main"
@@ -72,6 +75,7 @@ jobs:
             --window "${VALIDATION_WINDOW_SECONDS}" \
             --collect-window "${VALIDATION_COLLECT_WINDOW_SECONDS}" \
             --collect-delay "${VALIDATION_COLLECT_DELAY_SECONDS}" \
+            --latency-p95-threshold "${LATENCY_P95_THRESHOLD_MS}" \
             --log validation_window_log.jsonl \
             --live validation_live.json \
             --summary validation_summary.json \
@@ -87,7 +91,7 @@ jobs:
       - name: Annotate validation status
         if: steps.chaos_validation.outputs.validation_status && steps.chaos_validation.outputs.validation_status != '0'
         run: |
-          echo "::warning::Chaos validation exited with status ${VALIDATION_STATUS:-unknown}. See validation_summary.json for details." \
+          echo "::warning::Chaos validation exited with status ${{ steps.chaos_validation.outputs.validation_status }}. See validation_summary.json for details." \
             | tee /tmp/chaos_warning
 
       - name: Build deps from traces (no /dependencies)
@@ -123,11 +127,13 @@ jobs:
           python3 -m pip install --quiet requests
           for i in $(seq 1 "${WINDOWS}"); do
             echo "::group::window $i"
-            bash scripts/compose_chaos.sh "${{ matrix.p_fail }}" config/services_allowlist.txt "${WINDOW_SECONDS}" &
+            bash scripts/compose_chaos.sh "${{ matrix.p_fail }}" config/services_allowlist.txt "${CHAOS_WINDOW_SECONDS}" &
             CHAOS_PID=$!
+            sleep "${CHAOS_MEASURE_DELAY_SECONDS}"
             python3 scripts/collect_live.py \
               --locust "http://localhost:${ENVOY_PORT}/loadgen" \
-              --window "${WINDOW_SECONDS}" \
+              --window "${CHAOS_MEASURE_WINDOW_SECONDS}" \
+              --latency-p95-threshold "${LATENCY_P95_THRESHOLD_MS}" \
               --out live_${{ matrix.p_fail }}_${i}.json
             wait $CHAOS_PID || true
             echo "::endgroup::"
