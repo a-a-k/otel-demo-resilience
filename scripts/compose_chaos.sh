@@ -5,33 +5,43 @@ ALLOWLIST="${2:?services_allowlist.txt}"
 WINDOW="${3:-30}"
 LOG_FILE="${4:-window_log.jsonl}"
 PROJ="${COMPOSE_PROJECT_NAME:-$(basename vendor/opentelemetry-demo)}"
+COMPOSE_DIR="${COMPOSE_DIR:-vendor/opentelemetry-demo}"
 
 INFRA_RE='(frontend|frontend-proxy|jaeger|grafana|otel-collector|loadgenerator|prometheus|kafka|zipkin)$'
 
 # Build candidate container names from allowlist via Compose labels
 CANDIDATES=()
-if [ -f "$ALLOWLIST" ]; then
+compose_rows=()
+if [ -d "$COMPOSE_DIR" ]; then
+  while IFS= read -r line; do compose_rows+=("$line"); done < <(
+    (cd "$COMPOSE_DIR" && docker compose ps --format '{{.Name}} {{.Service}}' || true)
+  )
+fi
+if [ ${#compose_rows[@]} -eq 0 ]; then
+  while IFS= read -r line; do compose_rows+=("$line"); done < <(
+    docker ps --filter "label=com.docker.compose.project=${PROJ}" \
+      --format '{{.Names}} {{.Label "com.docker.compose.service"}}'
+  )
+fi
+if [ -f "$ALLOWLIST" ] && [ ${#compose_rows[@]} -gt 0 ]; then
   while IFS= read -r svc; do
     [[ -z "$svc" || "$svc" =~ ^# ]] && continue
-    # normalize (lower, dashes)
     svc_norm=$(echo "$svc" | tr '[:upper:]' '[:lower:]' | sed -E 's/_/-/g; s/(-)?service$//')
-    while IFS= read -r row; do
+    for row in "${compose_rows[@]}"; do
       name=$(echo "$row" | awk '{print $1}')
       lab=$(echo "$row" | awk '{print $2}')
       lab_norm=$(echo "$lab" | tr '[:upper:]' '[:lower:]' | sed -E 's/_/-/g; s/(-)?service$//')
-      if [[ "$lab_norm" == "$svc_norm" ]]; then CANDIDATES+=("$name"); fi
-    done < <(
-      docker ps --filter "label=com.docker.compose.project=${PROJ}" \
-        --format '{{.Names}} {{.Label "com.docker.compose.service"}}'
-    )
+      if [[ "$lab_norm" == "$svc_norm" && -n "$name" ]]; then
+        CANDIDATES+=("$name")
+      fi
+    done
   done < "$ALLOWLIST"
 fi
 
 # Fallback auto-discovery excluding infra/entrypoints
 if [ ${#CANDIDATES[@]} -eq 0 ]; then
   while IFS= read -r name; do CANDIDATES+=("$name"); done < <(
-    docker ps --filter "label=com.docker.compose.project=${PROJ}" \
-      --format '{{.Names}} {{.Label "com.docker.compose.service"}}' \
+    for row in "${compose_rows[@]}"; do echo "$row"; done \
     | awk 'NF==2 {print $1" "$2}' \
     | awk "!/$INFRA_RE/ {print \$1}"
   )
@@ -91,9 +101,12 @@ PY
 
 # Execute chaos (graceful stop/start only if K>0)
 if [ -s /tmp/killset.txt ]; then
+  echo "[chaos] killset (p=$P_FAIL, total=$TOTAL):"
+  cat /tmp/killset.txt
   xargs -r -a /tmp/killset.txt -n1 -P4 docker stop --time 1 || true
   sleep "${WINDOW}"
   xargs -r -a /tmp/killset.txt -n1 -P4 docker start || true
 else
+  echo "[chaos] killset empty (total=$TOTAL, p=$P_FAIL)"
   sleep "${WINDOW}"
 fi

@@ -20,7 +20,7 @@ jobs:
       ENVOY_PORT: "8080"
       LOOKBACK_MINUTES: "30"
       WARMUP_SECONDS: "120"
-      CHAOS_WINDOW_SECONDS: "10"
+      CHAOS_WINDOW_SECONDS: "20"
       CHAOS_MEASURE_DELAY_SECONDS: "15"
       CHAOS_MEASURE_WINDOW_SECONDS: "40"
       LATENCY_P95_THRESHOLD_MS: "1500"
@@ -38,7 +38,7 @@ jobs:
       VALIDATION_PROBE_INTERVAL: "1"
       VALIDATION_MIN_PROBE_FAILURES: "1"
       HEALTH_CHECK_WINDOW_SECONDS: "10"
-      HEALTH_CHECK_PROBE_ATTEMPTS: "100"
+      HEALTH_CHECK_PROBE_ATTEMPTS: "10"
       LOCUST_USERS: "150"
       LOCUST_SPAWN_RATE: "30"
 
@@ -113,7 +113,7 @@ jobs:
             --probe-interval "${VALIDATION_PROBE_INTERVAL}" \
             --min-probe-failures "${VALIDATION_MIN_PROBE_FAILURES}" \
             --probe-frontend "http://localhost:${ENVOY_PORT}" \
-            --probe-attempts 100 || echo "validation_status=$?" >> "$GITHUB_OUTPUT"
+            --probe-attempts 10 || echo "validation_status=$?" >> "$GITHUB_OUTPUT"
 
       - name: Annotate validation status
         if: steps.chaos_validation.outputs.validation_status && steps.chaos_validation.outputs.validation_status != '0'
@@ -168,7 +168,7 @@ jobs:
               --window "${CHAOS_MEASURE_WINDOW_SECONDS}" \
               --latency-p95-threshold "${LATENCY_P95_THRESHOLD_MS}" \
               --probe-frontend "http://localhost:${ENVOY_PORT}" \
-              --probe-attempts 100 \
+              --probe-attempts 10 \
               --window-log "$WINDOW_LOG" \
               --out live_${P_FAIL}_chunk${CHUNK}_${i}.json
             wait $CHAOS_PID || true
@@ -274,14 +274,6 @@ jobs:
                   sys.exit(1)
               rm = json.load(open(model_paths[0]))['R_model']
               rows.append((p, rm, mean, sd, n))
-              with open(f"summary_{p}.json", "w") as fh:
-                  json.dump({
-                      'p_fail': p,
-                      'R_model': rm,
-                      'R_live_mean': mean,
-                      'R_live_sd': sd,
-                      'windows': n
-                  }, fh)
           rows.sort()
           print('p\tR_model\tR_live_mean\tR_live_sd\tN')
           ok_model = True

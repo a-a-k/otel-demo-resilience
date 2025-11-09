@@ -123,29 +123,63 @@ def diff(a,b):
     return {k: max(0, b.get(k,0) - a.get(k,0)) for k in set(a)|set(b)}
 
 PROBE_ENDPOINTS = ["/api/products", "/api/recommendations", "/api/cart"]
+PROBE_PRODUCTS = [
+    "OLJCESPC7Z", "66VCHSJNUP", "9SIQT8TOJO", "1YMWWN1N4O",
+    "L9ECAV7KIM", "2ZYFJ3GM2N", "0PUK6V6EV0", "LS4PSXUNUM"
+]
+PROBE_CHECKOUT = {
+    "email": "resilience@example.com",
+    "streetAddress": "107 SW 7TH ST",
+    "city": "Miami",
+    "state": "FL",
+    "zipCode": "33130",
+    "country": "USA",
+    "firstName": "Resilience",
+    "lastName": "Bot",
+    "creditCard": {
+        "creditCardNumber": "4432-8015-6152-0454",
+        "creditCardExpirationMonth": 1,
+        "creditCardExpirationYear": 2030,
+        "creditCardCvv": 672
+    }
+}
 
 def frontend_probe(base_url, attempts=2, timeout=6):
     base = base_url.rstrip("/")
     ok = 0
     detail = []
     for _ in range(max(1, attempts)):
-        url = f"{base}{random.choice(PROBE_ENDPOINTS)}"
+        endpoint = random.choice(PROBE_ENDPOINTS + ["/api/cart/checkout"])
+        url = f"{base}{endpoint}"
         try:
-            r = R.get(url, timeout=timeout)
-            if 200 <= r.status_code < 300:
+            if endpoint == "/api/cart/checkout":
+                session = R.Session()
+                item = random.choice(PROBE_PRODUCTS)
+                add = session.post(f"{base}/api/cart", json={"item": {"productId": item, "quantity": 1}}, timeout=timeout)
+                add.raise_for_status()
+                payload = dict(PROBE_CHECKOUT)
+                payload["email"] = f"resilience+{random.randint(1,999999)}@example.com"
+                resp = session.post(url, json=payload, timeout=timeout)
+            else:
+                resp = R.get(url, timeout=timeout)
+            if 200 <= resp.status_code < 300:
                 pass
-            elif r.status_code in (401, 403):
-                detail.append({"endpoint": url, "status": "skip", "code": r.status_code})
+            elif resp.status_code in (401, 403):
+                detail.append({"endpoint": url, "status": "skip", "code": resp.status_code})
                 ok += 1
                 continue
             else:
-                r.raise_for_status()
+                resp.raise_for_status()
             data = {}
             try:
-                data = r.json()
+                data = resp.json()
             except ValueError:
-                pass
-            if not data:
+                data = {}
+            if endpoint == "/api/cart/checkout":
+                order_id = data.get("orderId") or data.get("order", {}).get("orderId")
+                if not order_id:
+                    raise RuntimeError("checkout missing orderId")
+            elif not data:
                 raise RuntimeError("empty response")
             ok += 1
             detail.append({"endpoint": url, "status": "ok"})
@@ -218,12 +252,13 @@ if __name__ == "__main__":
             detail["probe_ratio"] = ok_probe / total_probe
 
     killed_services = []
+    last_log = {}
     if a.window_log:
         entries = read_window_log(a.window_log)
         if entries:
-            killed_services = entries[-1].get("services") or []
+            last_log = entries[-1]
+            killed_services = last_log.get("services") or []
     detail["killed_services"] = killed_services
-
-    out = {"R_live": R_live, "detail": detail}
+    out = {"R_live": R_live, "detail": detail, "window_log": last_log}
     with open(a.out, "w") as f: json.dump(out, f)
     print(json.dumps(out))
