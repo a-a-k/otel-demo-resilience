@@ -79,15 +79,15 @@ jobs:
             --window-log "" \
             --out health_baseline.json
           python3 - <<'PY'
-import json, sys
-data=json.load(open('health_baseline.json'))
-r=data.get('R_live',0)
-detail=data.get('detail',{})
-if r < 0.95:
-    print('Baseline health check failed: R_live',r,'detail',detail, file=sys.stderr)
-    sys.exit(1)
-print('Baseline R_live OK:', r)
-PY
+          import json, sys
+          data=json.load(open('health_baseline.json'))
+          r=data.get('R_live',0)
+          detail=data.get('detail',{})
+          if r < 0.95:
+              print('Baseline health check failed: R_live',r,'detail',detail, file=sys.stderr)
+              sys.exit(1)
+          print('Baseline R_live OK:', r)
+          PY
 
       - name: Validate chaos + live measurement
         id: chaos_validation
