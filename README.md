@@ -29,7 +29,7 @@ Artifacts per cell:
 - `summary_<mode>_<p>.json` – aggregate (mean/sd).
 
 ## Notes
-- We **keep the demo’s Locust** load generator. `R_live = 1 - (5xx + transport errors + Locust #failures)/total`, плюс дополнительный функциональный пробный checkout для гарантии: если фронт не может оформить заказ (даже при 200 OK), окно тоже считается провалом.  
+- Мы **держим демо-Локуст** и измеряем `R_live = 1 - (5xx + transport errors + Locust #failures)/total`, дополняя это лёгкими фронтовыми GET-пробами. В CI добавлен baseline health check (без хаоса) — если он не проходит, пайплайн останавливается ещё до экспериментов.  
 - Discovery prefers scraping **Jaeger traces** with `scripts/traces_to_deps.py`; if indexing is still empty it automatically falls back to the `/jaeger/api/dependencies` endpoint.
 - CI bumps Locust’s default load (`LOCUST_USERS=150`, `LOCUST_SPAWN_RATE=30`) and runs `scripts/validate_chaos_live.py` up front (60 s chaos window с задержкой 15 с, HTTP-пробник фронтенда, несколько попыток до ≥80 запросов **или** хотя бы одной неудачной HTTP-проверки при `R_live ≤ 0.99`) — это подтверждает, что контейнеры реально глушатся; итоги попадают в `validation_*.json`.
 - Основной цикл хаоса использует 60‑секундные окна, даёт 15 с на “раскрытие” отказа и только после этого снимает 40‑секундное окно `collect_live.py`, чтобы измерения всегда приходились на период простоя сервисов.

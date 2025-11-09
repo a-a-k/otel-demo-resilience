@@ -35,6 +35,8 @@ jobs:
       VALIDATION_PROBE_URL: "http://localhost:8080/"
       VALIDATION_PROBE_INTERVAL: "1"
       VALIDATION_MIN_PROBE_FAILURES: "1"
+      HEALTH_CHECK_WINDOW_SECONDS: "10"
+      HEALTH_CHECK_PROBE_ATTEMPTS: "2"
       LOCUST_USERS: "150"
       LOCUST_SPAWN_RATE: "30"
 
@@ -65,6 +67,27 @@ jobs:
       - name: Warm up & ensure trace traffic
         run: |
           python3 scripts/warmup.py --locust "http://localhost:${ENVOY_PORT}/loadgen" --timeout 300
+
+      - name: Baseline health check (no chaos)
+        run: |
+          python3 scripts/collect_live.py \
+            --locust "http://localhost:${ENVOY_PORT}/loadgen" \
+            --window "${HEALTH_CHECK_WINDOW_SECONDS}" \
+            --latency-p95-threshold "${LATENCY_P95_THRESHOLD_MS}" \
+            --probe-frontend "http://localhost:${ENVOY_PORT}" \
+            --probe-attempts "${HEALTH_CHECK_PROBE_ATTEMPTS}" \
+            --window-log "" \
+            --out health_baseline.json
+          python3 - <<'PY'
+import json, sys
+data=json.load(open('health_baseline.json'))
+r=data.get('R_live',0)
+detail=data.get('detail',{})
+if r < 0.95:
+    print('Baseline health check failed: R_live',r,'detail',detail, file=sys.stderr)
+    sys.exit(1)
+print('Baseline R_live OK:', r)
+PY
 
       - name: Validate chaos + live measurement
         id: chaos_validation

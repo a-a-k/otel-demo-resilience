@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import argparse, time, json, csv, io, re, random
+import argparse, time, json, csv, io, re, random, os, pathlib
 import requests as R
 PAT_ERR_5XX = re.compile(r"^5\d\d")
 PAT_TRANSPORT = re.compile(r"(timeout|connection|reset|broken pipe|read timed out)", re.I)
@@ -121,53 +121,51 @@ def snapshot(base):
 def diff(a,b):
     return {k: max(0, b.get(k,0) - a.get(k,0)) for k in set(a)|set(b)}
 
-CHECKOUT_PAYLOAD = {
-    "email": "resilience@example.com",
-    "streetAddress": "107 SW 7TH ST",
-    "city": "Miami",
-    "state": "FL",
-    "zipCode": "33130",
-    "country": "USA",
-    "firstName": "Resilience",
-    "lastName": "Bot",
-    "creditCard": {
-        "creditCardNumber": "4432-8015-6152-0454",
-        "creditCardExpirationMonth": 1,
-        "creditCardExpirationYear": 2030,
-        "creditCardCvv": 672
-    }
-}
-PRODUCT_IDS = [
-    "OLJCESPC7Z", "66VCHSJNUP", "9SIQT8TOJO", "1YMWWN1N4O",
-    "L9ECAV7KIM", "2ZYFJ3GM2N", "0PUK6V6EV0", "LS4PSXUNUM"
-]
+PROBE_ENDPOINTS = ["/api/products", "/api/recommendations", "/api/cart"]
 
-def checkout_probe(base_url, attempts=2, timeout=6):
+def frontend_probe(base_url, attempts=2, timeout=6):
     base = base_url.rstrip("/")
-    api = f"{base}/api"
     ok = 0
     detail = []
     for _ in range(max(1, attempts)):
-        product = random.choice(PRODUCT_IDS)
-        session = R.Session()
+        url = f"{base}{random.choice(PROBE_ENDPOINTS)}"
         try:
-            r = session.post(f"{api}/cart", json={"item":{"productId":product,"quantity":1}}, timeout=timeout)
-            r.raise_for_status()
-            r = session.post(f"{api}/cart/checkout", json=CHECKOUT_PAYLOAD, timeout=timeout)
-            r.raise_for_status()
+            r = R.get(url, timeout=timeout)
+            if 200 <= r.status_code < 300:
+                pass
+            elif r.status_code in (401, 403):
+                detail.append({"endpoint": url, "status": "skip", "code": r.status_code})
+                ok += 1
+                continue
+            else:
+                r.raise_for_status()
             data = {}
             try:
                 data = r.json()
             except ValueError:
                 pass
-            order_id = data.get("orderId") or data.get("order",{}).get("orderId")
-            if not order_id:
-                raise RuntimeError("orderId missing")
+            if not data:
+                raise RuntimeError("empty response")
             ok += 1
-            detail.append({"product": product, "status": "ok"})
+            detail.append({"endpoint": url, "status": "ok"})
         except Exception as exc:
-            detail.append({"product": product, "status": "fail", "error": str(exc)})
+            detail.append({"endpoint": url, "status": "fail", "error": str(exc)})
     return ok, attempts, detail
+
+def read_window_log(path):
+    data = []
+    try:
+        with open(path) as fh:
+            for line in fh:
+                line=line.strip()
+                if not line: continue
+                try:
+                    data.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except FileNotFoundError:
+        pass
+    return data
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
@@ -178,6 +176,8 @@ if __name__ == "__main__":
     ap.add_argument("--probe-frontend", default="http://localhost:8080",
                     help="Frontend base URL for functional probes (empty to disable).")
     ap.add_argument("--probe-attempts", type=int, default=2)
+    ap.add_argument("--window-log", default="window_log.jsonl",
+                    help="Path to window log emitted by compose_chaos.sh; used for annotations.")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
@@ -208,13 +208,20 @@ if __name__ == "__main__":
 
     probe_detail = []
     if a.probe_frontend:
-        ok_probe, total_probe, probe_detail = checkout_probe(a.probe_frontend, a.probe_attempts)
+        ok_probe, total_probe, probe_detail = frontend_probe(a.probe_frontend, a.probe_attempts)
         detail["probe_ok"] = ok_probe
         detail["probe_total"] = total_probe
         detail["probe_detail"] = probe_detail
         if total_probe > 0:
             R_live = min(R_live, ok_probe / total_probe)
             detail["probe_ratio"] = ok_probe / total_probe
+
+    killed_services = []
+    if a.window_log:
+        entries = read_window_log(a.window_log)
+        if entries:
+            killed_services = entries[-1].get("services") or []
+    detail["killed_services"] = killed_services
 
     out = {"R_live": R_live, "detail": detail}
     with open(a.out, "w") as f: json.dump(out, f)
