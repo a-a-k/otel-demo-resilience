@@ -144,12 +144,15 @@ PROBE_CHECKOUT = {
     }
 }
 
-def frontend_probe(base_url, attempts=2, timeout=6):
+def frontend_probe(base_url, attempts=2, timeout=6, enable_checkout=True):
     base = base_url.rstrip("/")
     ok = 0
     detail = []
+    endpoints = PROBE_ENDPOINTS + (["/api/cart/checkout"] if enable_checkout else [])
+    if not endpoints:
+        return 0, 0, detail
     for _ in range(max(1, attempts)):
-        endpoint = random.choice(PROBE_ENDPOINTS + ["/api/cart/checkout"])
+        endpoint = random.choice(endpoints)
         url = f"{base}{endpoint}"
         try:
             if endpoint == "/api/cart/checkout":
@@ -213,6 +216,8 @@ if __name__ == "__main__":
     ap.add_argument("--probe-attempts", type=int, default=2)
     ap.add_argument("--window-log", default="window_log.jsonl",
                     help="Path to window log emitted by compose_chaos.sh; used for annotations.")
+    ap.add_argument("--probe-attempts", type=int, default=2)
+    ap.add_argument("--probe-checkout", action="store_true", default=False)
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
@@ -243,7 +248,11 @@ if __name__ == "__main__":
 
     probe_detail = []
     if a.probe_frontend:
-        ok_probe, total_probe, probe_detail = frontend_probe(a.probe_frontend, a.probe_attempts)
+        ok_probe, total_probe, probe_detail = frontend_probe(
+            a.probe_frontend,
+            attempts=max(1, a.probe_attempts),
+            enable_checkout=a.probe_checkout
+        )
         detail["probe_ok"] = ok_probe
         detail["probe_total"] = total_probe
         detail["probe_detail"] = probe_detail

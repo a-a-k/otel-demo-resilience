@@ -113,7 +113,8 @@ jobs:
             --probe-interval "${VALIDATION_PROBE_INTERVAL}" \
             --min-probe-failures "${VALIDATION_MIN_PROBE_FAILURES}" \
             --probe-frontend "http://localhost:${ENVOY_PORT}" \
-            --probe-attempts 10 || echo "validation_status=$?" >> "$GITHUB_OUTPUT"
+            --probe-attempts 100 \
+            --probe-checkout || echo "validation_status=$?" >> "$GITHUB_OUTPUT"
 
       - name: Annotate validation status
         if: steps.chaos_validation.outputs.validation_status && steps.chaos_validation.outputs.validation_status != '0'
@@ -169,6 +170,7 @@ jobs:
               --latency-p95-threshold "${LATENCY_P95_THRESHOLD_MS}" \
               --probe-frontend "http://localhost:${ENVOY_PORT}" \
               --probe-attempts 10 \
+              --probe-checkout \
               --window-log "$WINDOW_LOG" \
               --out live_${P_FAIL}_chunk${CHUNK}_${i}.json
             wait $CHAOS_PID || true
