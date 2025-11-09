@@ -36,6 +36,7 @@ def discover_base(base, attempts=5, sleep_s=2):
         for prefix in ("", "/api", "/ui/api"):
             if _csv(f"{base}{prefix}/stats/requests/csv"):
                 return (prefix, "csv")
+    if attempts > 1:
         time.sleep(max(0.5, sleep_s))
     raise RuntimeError("Locust endpoints not reachable as JSON or CSV")
 
