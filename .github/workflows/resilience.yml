@@ -8,11 +8,13 @@ on:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 360
     strategy:
       fail-fast: false
+      max-parallel: 20
       matrix:
         p_fail: [ "0.1", "0.3", "0.5", "0.7", "0.9" ]
+        chunk: [ "1", "2", "3", "4" ]
 
     env:
       ENVOY_PORT: "8080"
@@ -22,7 +24,7 @@ jobs:
       CHAOS_MEASURE_DELAY_SECONDS: "15"
       CHAOS_MEASURE_WINDOW_SECONDS: "40"
       LATENCY_P95_THRESHOLD_MS: "1500"
-      WINDOWS: "12"
+      WINDOWS: "100"
       SAMPLES: "120000"
       OTEL_DEMO_REF: "main"
       VALIDATION_WINDOW_SECONDS: "60"
@@ -148,11 +150,17 @@ jobs:
             --out model_${{ matrix.p_fail }}.json
 
       - name: Chaos windows + R_live from Locust
+        env:
+          P_FAIL: ${{ matrix.p_fail }}
+          CHUNK_ID: ${{ matrix.chunk }}
         run: |
           python3 -m pip install --quiet requests
+          CHUNK=${CHUNK_ID}
+          WINDOW_LOG="window_log_p${P_FAIL}_chunk${CHUNK}.jsonl"
+          : > "$WINDOW_LOG"
           for i in $(seq 1 "${WINDOWS}"); do
-            echo "::group::window $i"
-            bash scripts/compose_chaos.sh "${{ matrix.p_fail }}" config/services_allowlist.txt "${CHAOS_WINDOW_SECONDS}" &
+            echo "::group::window chunk=${CHUNK} idx=$i"
+            bash scripts/compose_chaos.sh "${P_FAIL}" config/services_allowlist.txt "${CHAOS_WINDOW_SECONDS}" "$WINDOW_LOG" &
             CHAOS_PID=$!
             sleep "${CHAOS_MEASURE_DELAY_SECONDS}"
             python3 scripts/collect_live.py \
@@ -161,23 +169,31 @@ jobs:
               --latency-p95-threshold "${LATENCY_P95_THRESHOLD_MS}" \
               --probe-frontend "http://localhost:${ENVOY_PORT}" \
               --probe-attempts 2 \
-              --out live_${{ matrix.p_fail }}_${i}.json
+              --window-log "$WINDOW_LOG" \
+              --out live_${P_FAIL}_chunk${CHUNK}_${i}.json
             wait $CHAOS_PID || true
             echo "::endgroup::"
           done
 
-      - name: Summarize model vs live
+      - name: Summarize chunk
+        env:
+          P_FAIL: ${{ matrix.p_fail }}
+          CHUNK_ID: ${{ matrix.chunk }}
         run: |
           python3 - << 'PY'
-          import json,glob,statistics
-          p="${{ matrix.p_fail }}"
-          model=json.load(open(f"model_{p}.json"))
-          vals=[json.load(open(f))["R_live"] for f in sorted(glob.glob(f"live_{p}_*.json"))]
-          summary={"p_fail":float(p),"R_model":model["R_model"],
-                   "R_live_mean":(sum(vals)/len(vals) if vals else None),
-                   "R_live_sd":(statistics.pstdev(vals) if len(vals)>1 else 0.0),
-                   "windows":len(vals)}
-          json.dump(summary, open(f"summary_{p}.json","w"))
+          import glob, json, os
+          p=os.environ["P_FAIL"]
+          chunk=os.environ["CHUNK_ID"]
+          files=sorted(glob.glob(f"live_{p}_chunk{chunk}_*.json"))
+          vals=[json.load(open(f))["R_live"] for f in files]
+          summary={
+              "p_fail": float(p),
+              "chunk": int(chunk),
+              "windows": len(vals),
+              "sum": sum(vals),
+              "sum_sq": sum(v*v for v in vals)
+          }
+          json.dump(summary, open(f"summary_{p}_chunk{chunk}.json","w"))
           print(summary)
           PY
 
@@ -196,15 +212,15 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: results_${{ matrix.p_fail }}
+          name: results_${{ matrix.p_fail }}_${{ matrix.chunk }}
           path: |
             deps.json
             graph.json
             replicas.json
             model_${{ matrix.p_fail }}.json
-            live_${{ matrix.p_fail }}_*.json
-            summary_${{ matrix.p_fail }}.json
-            window_log.jsonl
+            live_${{ matrix.p_fail }}_chunk${{ matrix.chunk }}_*.json
+            summary_${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.json
+            window_log_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.jsonl
             validation_summary.json
             validation_live.json
             validation_window_log.jsonl
@@ -227,24 +243,55 @@ jobs:
       - name: Print quick report and enforce monotonicity
         run: |
           python3 - << 'PY'
-          import glob, json, sys
-          sums = []
-          for f in sorted(glob.glob('summary_*.json')):
-              s = json.load(open(f))
-              sums.append((float(s['p_fail']), s['R_model'], s['R_live_mean'], s['R_live_sd'], s['windows']))
-          if len(sums) != 5:
-              print('Expected 5 summary_* files, got', len(sums), file=sys.stderr)
+          import glob, json, sys, math
+          chunk_files = sorted(glob.glob('summary_*_chunk*.json'))
+          if not chunk_files:
+              print('No chunk summary files found', file=sys.stderr)
               sys.exit(1)
-          sums.sort()
+          agg = {}
+          for f in chunk_files:
+              s = json.load(open(f))
+              p = float(s['p_fail'])
+              data = agg.setdefault(p, {'sum':0.0,'sum_sq':0.0,'n':0})
+              data['sum'] += s['sum']
+              data['sum_sq'] += s['sum_sq']
+              data['n'] += s['windows']
+          rows = []
+          for p, data in agg.items():
+              n = data['n']
+              if n == 0:
+                  mean = 0.0
+                  sd = 0.0
+              else:
+                  mean = data['sum']/n
+                  variance = max(0.0, data['sum_sq']/n - mean*mean)
+                  sd = math.sqrt(variance)
+              try:
+                  rm = json.load(open(f"model_{p}.json"))['R_model']
+              except Exception:
+                  print('Missing model file for p', p, file=sys.stderr)
+                  sys.exit(1)
+              rows.append((p, rm, mean, sd, n))
+              with open(f"summary_{p}.json", "w") as fh:
+                  json.dump({
+                      'p_fail': p,
+                      'R_model': rm,
+                      'R_live_mean': mean,
+                      'R_live_sd': sd,
+                      'windows': n
+                  }, fh)
+          rows.sort()
           print('p\tR_model\tR_live_mean\tR_live_sd\tN')
           ok_model = True
           ok_live = True
           prev_rm = None
           prev_rl = None
-          for p, rm, rl, sd, n in sums:
-              print(f"{p:.1f}\t{rm:.4f}\t{(rl or 0):.4f}\t{(sd or 0):.4f}\t{n}")
-              if prev_rm is not None and rm > prev_rm + 1e-9: ok_model = False
-              if prev_rl is not None and (rl or 0) > (prev_rl or 0) + 1e-9: ok_live = False
+          for p, rm, rl, sd, n in rows:
+              print(f"{p:.1f}\t{rm:.4f}\t{rl:.4f}\t{sd:.4f}\t{n}")
+              if prev_rm is not None and rm > prev_rm + 1e-9:
+                  ok_model = False
+              if prev_rl is not None and rl > prev_rl + 1e-9:
+                  ok_live = False
               prev_rm, prev_rl = rm, rl
           if not ok_model:
               print('Monotonicity check failed: R_model is not non-increasing with p_fail', file=sys.stderr)
