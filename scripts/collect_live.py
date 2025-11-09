@@ -213,7 +213,6 @@ if __name__ == "__main__":
                     help="If latest 95th percentile latency (ms) exceeds this, mark window unhealthy.")
     ap.add_argument("--probe-frontend", default="http://localhost:8080",
                     help="Frontend base URL for functional probes (empty to disable).")
-    ap.add_argument("--probe-attempts", type=int, default=2)
     ap.add_argument("--window-log", default="window_log.jsonl",
                     help="Path to window log emitted by compose_chaos.sh; used for annotations.")
     ap.add_argument("--probe-attempts", type=int, default=2)
