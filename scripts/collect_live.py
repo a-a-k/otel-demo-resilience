@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import argparse, time, json, csv, io, re
+import argparse, time, json, csv, io, re, random
 import requests as R
 PAT_ERR_5XX = re.compile(r"^5\d\d")
 PAT_TRANSPORT = re.compile(r"(timeout|connection|reset|broken pipe|read timed out)", re.I)
@@ -121,12 +121,62 @@ def snapshot(base):
 def diff(a,b):
     return {k: max(0, b.get(k,0) - a.get(k,0)) for k in set(a)|set(b)}
 
+CHECKOUT_PAYLOAD = {
+    "email": "resilience@example.com",
+    "streetAddress": "107 SW 7TH ST",
+    "city": "Miami",
+    "state": "FL",
+    "zipCode": "33130",
+    "country": "USA",
+    "firstName": "Resilience",
+    "lastName": "Bot",
+    "creditCard": {
+        "creditCardNumber": "4432-8015-6152-0454",
+        "creditCardExpirationMonth": 1,
+        "creditCardExpirationYear": 2030,
+        "creditCardCvv": 672
+    }
+}
+PRODUCT_IDS = [
+    "OLJCESPC7Z", "66VCHSJNUP", "9SIQT8TOJO", "1YMWWN1N4O",
+    "L9ECAV7KIM", "2ZYFJ3GM2N", "0PUK6V6EV0", "LS4PSXUNUM"
+]
+
+def checkout_probe(base_url, attempts=2, timeout=6):
+    base = base_url.rstrip("/")
+    ok = 0
+    detail = []
+    for _ in range(max(1, attempts)):
+        product = random.choice(PRODUCT_IDS)
+        session = R.Session()
+        try:
+            r = session.post(f"{base}/cart", json={"item":{"productId":product,"quantity":1}}, timeout=timeout)
+            r.raise_for_status()
+            r = session.post(f"{base}/cart/checkout", json=CHECKOUT_PAYLOAD, timeout=timeout)
+            r.raise_for_status()
+            data = {}
+            try:
+                data = r.json()
+            except ValueError:
+                pass
+            order_id = data.get("orderId") or data.get("order",{}).get("orderId")
+            if not order_id:
+                raise RuntimeError("orderId missing")
+            ok += 1
+            detail.append({"product": product, "status": "ok"})
+        except Exception as exc:
+            detail.append({"product": product, "status": "fail", "error": str(exc)})
+    return ok, attempts, detail
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--locust", required=True)    # e.g., http://localhost:8080/loadgen
     ap.add_argument("--window", type=int, default=30)
     ap.add_argument("--latency-p95-threshold", type=float, default=1500.0,
                     help="If latest 95th percentile latency (ms) exceeds this, mark window unhealthy.")
+    ap.add_argument("--probe-frontend", default="http://localhost:8080",
+                    help="Frontend base URL for functional probes (empty to disable).")
+    ap.add_argument("--probe-attempts", type=int, default=2)
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
@@ -154,6 +204,16 @@ if __name__ == "__main__":
     detail["latency_median"] = meta1.get("median")
     detail["latency_bad"] = latency_bad
     detail["zero_traffic"] = zero_traffic
+
+    probe_detail = []
+    if a.probe_frontend:
+        ok_probe, total_probe, probe_detail = checkout_probe(a.probe_frontend, a.probe_attempts)
+        detail["probe_ok"] = ok_probe
+        detail["probe_total"] = total_probe
+        detail["probe_detail"] = probe_detail
+        if total_probe > 0:
+            R_live = min(R_live, ok_probe / total_probe)
+            detail["probe_ratio"] = ok_probe / total_probe
 
     out = {"R_live": R_live, "detail": detail}
     with open(a.out, "w") as f: json.dump(out, f)
