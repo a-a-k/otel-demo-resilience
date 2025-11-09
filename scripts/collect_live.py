@@ -144,15 +144,16 @@ PRODUCT_IDS = [
 
 def checkout_probe(base_url, attempts=2, timeout=6):
     base = base_url.rstrip("/")
+    api = f"{base}/api"
     ok = 0
     detail = []
     for _ in range(max(1, attempts)):
         product = random.choice(PRODUCT_IDS)
         session = R.Session()
         try:
-            r = session.post(f"{base}/cart", json={"item":{"productId":product,"quantity":1}}, timeout=timeout)
+            r = session.post(f"{api}/cart", json={"item":{"productId":product,"quantity":1}}, timeout=timeout)
             r.raise_for_status()
-            r = session.post(f"{base}/cart/checkout", json=CHECKOUT_PAYLOAD, timeout=timeout)
+            r = session.post(f"{api}/cart/checkout", json=CHECKOUT_PAYLOAD, timeout=timeout)
             r.raise_for_status()
             data = {}
             try:
