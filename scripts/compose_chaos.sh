@@ -39,21 +39,24 @@ fi
 
 TOTAL=${#CANDIDATES[@]}
 
-# Draw K ~ Binomial(TOTAL, p_fail) (allow K=0)
-export TOTAL P_FAIL
-KILL_N=$(python3 - <<'PY'
-import os, random
-n=int(os.environ.get('TOTAL','0'))
-p=float(os.environ.get('P_FAIL','0'))
-print(sum(1 for _ in range(n) if random.random() < p))
+: > /tmp/killset.txt
+if [ "$TOTAL" -gt 0 ] && awk "BEGIN {exit !($P_FAIL > 0)}"; then
+  printf "%s\n" "${CANDIDATES[@]}" | python3 - "$P_FAIL" > /tmp/killset.txt <<'PY'
+import sys, random, math
+p = float(sys.argv[1])
+candidates = [line.strip() for line in sys.stdin if line.strip()]
+n = len(candidates)
+if n == 0 or p <= 0:
+    kill_n = 0
+else:
+    kill_n = int(round(n * p))
+    if p > 0 and kill_n == 0:
+        kill_n = 1
+    kill_n = min(kill_n, n)
+if kill_n > 0:
+    random.shuffle(candidates)
+    print("\n".join(candidates[:kill_n]))
 PY
-)
-
-# Choose kill set (possibly empty)
-if [ "$TOTAL" -gt 0 ] && [ "$KILL_N" -gt 0 ]; then
-  shuf -e "${CANDIDATES[@]}" | head -n "${KILL_N}" > /tmp/killset.txt
-else
-  : > /tmp/killset.txt
 fi
 
 # Log window summary (always)

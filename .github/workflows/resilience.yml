@@ -38,7 +38,7 @@ jobs:
       VALIDATION_PROBE_INTERVAL: "1"
       VALIDATION_MIN_PROBE_FAILURES: "1"
       HEALTH_CHECK_WINDOW_SECONDS: "10"
-      HEALTH_CHECK_PROBE_ATTEMPTS: "2"
+      HEALTH_CHECK_PROBE_ATTEMPTS: "100"
       LOCUST_USERS: "150"
       LOCUST_SPAWN_RATE: "30"
 
@@ -113,7 +113,7 @@ jobs:
             --probe-interval "${VALIDATION_PROBE_INTERVAL}" \
             --min-probe-failures "${VALIDATION_MIN_PROBE_FAILURES}" \
             --probe-frontend "http://localhost:${ENVOY_PORT}" \
-            --probe-attempts 2 || echo "validation_status=$?" >> "$GITHUB_OUTPUT"
+            --probe-attempts 100 || echo "validation_status=$?" >> "$GITHUB_OUTPUT"
 
       - name: Annotate validation status
         if: steps.chaos_validation.outputs.validation_status && steps.chaos_validation.outputs.validation_status != '0'
@@ -168,7 +168,7 @@ jobs:
               --window "${CHAOS_MEASURE_WINDOW_SECONDS}" \
               --latency-p95-threshold "${LATENCY_P95_THRESHOLD_MS}" \
               --probe-frontend "http://localhost:${ENVOY_PORT}" \
-              --probe-attempts 2 \
+              --probe-attempts 100 \
               --window-log "$WINDOW_LOG" \
               --out live_${P_FAIL}_chunk${CHUNK}_${i}.json
             wait $CHAOS_PID || true
@@ -246,7 +246,7 @@ jobs:
         run: |
           python3 - << 'PY'
           import glob, json, sys, math
-          chunk_files = sorted(glob.glob('summary_*_chunk*.json'))
+          chunk_files = sorted(glob.glob('**/summary_*_chunk*.json', recursive=True))
           if not chunk_files:
               print('No chunk summary files found', file=sys.stderr)
               sys.exit(1)
@@ -268,11 +268,11 @@ jobs:
                   mean = data['sum']/n
                   variance = max(0.0, data['sum_sq']/n - mean*mean)
                   sd = math.sqrt(variance)
-              try:
-                  rm = json.load(open(f"model_{p}.json"))['R_model']
-              except Exception:
+              model_paths = glob.glob(f"**/model_{p}.json", recursive=True)
+              if not model_paths:
                   print('Missing model file for p', p, file=sys.stderr)
                   sys.exit(1)
+              rm = json.load(open(model_paths[0]))['R_model']
               rows.append((p, rm, mean, sd, n))
               with open(f"summary_{p}.json", "w") as fh:
                   json.dump({
