@@ -10,5 +10,8 @@ ad
 email
 fraud
 accounting
-# infra/entrypoints intentionally excluded:
+flagd
+product-reviews
+quote
+# Infra/entrypoints intentionally excluded:
 # frontend, frontend-proxy, jaeger, grafana, otel-collector, kafka, prometheus, loadgenerator

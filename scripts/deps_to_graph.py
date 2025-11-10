@@ -22,7 +22,7 @@ else:
 # producers and consumers directly via the bridging logic below.
 SKIP = {
     "frontend-proxy", "jaeger", "grafana", "otel-collector", "zipkin",
-    "kafka", "kafka-server", "prometheus", "loadgenerator"
+    "kafka", "kafka-server", "prometheus", "loadgenerator", "load-generator"
 }
 
 def norm(s: str) -> str:

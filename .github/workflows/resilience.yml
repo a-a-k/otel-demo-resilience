@@ -267,13 +267,29 @@ jobs:
         run: |
           python3 - << 'PY'
           import glob, json, sys, math
+
+          def load_json_relaxed(path):
+              with open(path, "r", encoding="utf-8") as fh:
+                  body = fh.read()
+              try:
+                  return json.loads(body)
+              except json.JSONDecodeError:
+                  for line in body.splitlines():
+                      line = line.strip()
+                      if not line:
+                          continue
+                      try:
+                          return json.loads(line)
+                      except json.JSONDecodeError:
+                          continue
+          raise ValueError(f"Unable to parse JSON in {path}")
           chunk_files = sorted(glob.glob('**/summary_*_chunk*.json', recursive=True))
           if not chunk_files:
               print('No chunk summary files found', file=sys.stderr)
               sys.exit(1)
           agg = {}
           for f in chunk_files:
-              s = json.load(open(f))
+              s = load_json_relaxed(f)
               p = float(s['p_fail'])
               data = agg.setdefault(p, {'sum':0.0,'sum_sq':0.0,'n':0})
               data['sum'] += s['sum']
