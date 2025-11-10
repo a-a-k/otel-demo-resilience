@@ -20,7 +20,7 @@ jobs:
       ENVOY_PORT: "8080"
       LOOKBACK_MINUTES: "30"
       WARMUP_SECONDS: "120"
-      CHAOS_WINDOW_SECONDS: "20"
+      CHAOS_WINDOW_SECONDS: "60"
       CHAOS_MEASURE_DELAY_SECONDS: "15"
       CHAOS_MEASURE_WINDOW_SECONDS: "40"
       LATENCY_P95_THRESHOLD_MS: "1500"
@@ -28,7 +28,7 @@ jobs:
       SAMPLES: "120000"
       OTEL_DEMO_REF: "main"
       VALIDATION_WINDOW_SECONDS: "60"
-      VALIDATION_COLLECT_WINDOW_SECONDS: "60"
+      VALIDATION_COLLECT_WINDOW_SECONDS: "40"
       VALIDATION_COLLECT_DELAY_SECONDS: "15"
       VALIDATION_MIN_TOTAL: "80"
       VALIDATION_MAX_ATTEMPTS: "3"
@@ -54,6 +54,25 @@ jobs:
         run: |
           docker --version
           docker compose version || true
+
+      - name: Verify chaos timing configuration
+        run: |
+          python3 - <<'PY'
+          import os, sys
+
+          def check(label, window_key, delay_key, measure_key):
+              window = int(os.environ[window_key])
+              delay = int(os.environ[delay_key])
+              measure = int(os.environ[measure_key])
+              required = delay + measure
+              if window < required:
+                  print(f"{label} window {window}s is shorter than delay+measure {required}s", file=sys.stderr)
+                  sys.exit(1)
+              print(f"{label} timing OK: window={window}s delay={delay}s measure={measure}s")
+
+          check("chaos", "CHAOS_WINDOW_SECONDS", "CHAOS_MEASURE_DELAY_SECONDS", "CHAOS_MEASURE_WINDOW_SECONDS")
+          check("validation", "VALIDATION_WINDOW_SECONDS", "VALIDATION_COLLECT_DELAY_SECONDS", "VALIDATION_COLLECT_WINDOW_SECONDS")
+          PY
 
       - name: Fetch opentelemetry-demo
         run: bash vendor/fetch-otel-demo.sh "$OTEL_DEMO_REF"
