@@ -48,19 +48,19 @@ if [ ${#CANDIDATES[@]} -eq 0 ]; then
 fi
 
 TOTAL=${#CANDIDATES[@]}
+export TOTAL
 
 : > /tmp/killset.txt
 if [ "$TOTAL" -gt 0 ] && awk "BEGIN {exit !($P_FAIL > 0)}"; then
-  printf "%s\n" "${CANDIDATES[@]}" | python3 - "$P_FAIL" > /tmp/killset.txt <<'PY'
+  python3 - "$P_FAIL" "${CANDIDATES[@]}" > /tmp/killset.txt <<'PY'
 import sys, random, math
 p = float(sys.argv[1])
-candidates = [line.strip() for line in sys.stdin if line.strip()]
+candidates = [c for c in sys.argv[2:] if c]
 n = len(candidates)
-if n == 0 or p <= 0:
-    kill_n = 0
-else:
+kill_n = 0
+if n > 0 and p > 0:
     kill_n = int(round(n * p))
-    if p > 0 and kill_n == 0:
+    if kill_n == 0:
         kill_n = 1
     kill_n = min(kill_n, n)
 if kill_n > 0:
