@@ -123,6 +123,7 @@ def diff(a,b):
     return {k: max(0, b.get(k,0) - a.get(k,0)) for k in set(a)|set(b)}
 
 PROBE_ENDPOINTS = ["/api/products", "/api/recommendations", "/api/cart"]
+PROBE_CHECKOUT_ENDPOINT = "/api/checkout"
 PROBE_PRODUCTS = [
     "OLJCESPC7Z", "66VCHSJNUP", "9SIQT8TOJO", "1YMWWN1N4O",
     "L9ECAV7KIM", "2ZYFJ3GM2N", "0PUK6V6EV0", "LS4PSXUNUM"
@@ -148,21 +149,22 @@ def frontend_probe(base_url, attempts=2, timeout=6, enable_checkout=True):
     base = base_url.rstrip("/")
     ok = 0
     detail = []
-    endpoints = PROBE_ENDPOINTS + (["/api/cart/checkout"] if enable_checkout else [])
+    endpoints = PROBE_ENDPOINTS + ([PROBE_CHECKOUT_ENDPOINT] if enable_checkout else [])
     if not endpoints:
         return 0, 0, detail
     for _ in range(max(1, attempts)):
         endpoint = random.choice(endpoints)
         url = f"{base}{endpoint}"
         try:
-            if endpoint == "/api/cart/checkout":
+            if endpoint == PROBE_CHECKOUT_ENDPOINT:
                 session = R.Session()
                 item = random.choice(PROBE_PRODUCTS)
                 add = session.post(f"{base}/api/cart", json={"item": {"productId": item, "quantity": 1}}, timeout=timeout)
                 add.raise_for_status()
                 payload = dict(PROBE_CHECKOUT)
                 payload["email"] = f"resilience+{random.randint(1,999999)}@example.com"
-                resp = session.post(url, json=payload, timeout=timeout)
+                checkout_url = f"{url}?currencyCode=USD"
+                resp = session.post(checkout_url, json=payload, timeout=timeout)
             else:
                 resp = R.get(url, timeout=timeout)
             if 200 <= resp.status_code < 300:
