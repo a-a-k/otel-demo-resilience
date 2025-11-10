@@ -274,22 +274,18 @@ jobs:
               decoder = json.JSONDecoder()
               idx = 0
               while idx < len(data):
-                  brace = data.find("{", idx)
-                  if brace == -1:
+                  while idx < len(data) and data[idx].isspace():
+                      idx += 1
+                  if idx >= len(data):
                       break
+                  if data[idx] not in "{[":
+                      idx += 1
+                      continue
                   try:
-                      obj, end = decoder.raw_decode(data, brace)
+                      obj, end = decoder.raw_decode(data, idx)
                       return obj
                   except json.JSONDecodeError:
-                      idx = brace + 1
-                      continue
-              for line in data.splitlines():
-                  line = line.strip()
-                  if not line:
-                      continue
-                  try:
-                      return json.loads(line)
-                  except json.JSONDecodeError:
+                      idx += 1
                       continue
               raise ValueError(f"Unable to parse JSON in {path}")
           chunk_files = sorted(glob.glob('**/summary_*_chunk*.json', recursive=True))
