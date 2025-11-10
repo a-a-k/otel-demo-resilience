@@ -59,6 +59,8 @@ def main():
                     help="Optional frontend base URL for functional probes (forwarded to collect_live.py).")
     ap.add_argument("--probe-attempts", type=int, default=0,
                     help="Number of checkout probes to run per window (0 disables).")
+    ap.add_argument("--probe-checkout", action="store_true", default=False,
+                    help="Forward --probe-checkout to collect_live.py (runs checkout scenario).")
     ap.add_argument("--probe-url", default="http://localhost:8080/",
                     help="Optional HTTP endpoint to probe during chaos; empty string disables probing.")
     ap.add_argument("--probe-interval", type=float, default=1.0,
@@ -118,6 +120,8 @@ def main():
             collect_cmd.extend(["--probe-frontend", args.probe_frontend])
         if args.probe_attempts and args.probe_attempts > 0:
             collect_cmd.extend(["--probe-attempts", str(args.probe_attempts)])
+        if args.probe_checkout:
+            collect_cmd.append("--probe-checkout")
 
         print(f"[validation] attempt {attempt}: chaos window={args.window}s delay={args.collect_delay}s collect_window={collect_window}s", file=sys.stderr)
         chaos_proc = subprocess.Popen(chaos_cmd)
