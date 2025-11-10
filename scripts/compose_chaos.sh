@@ -101,11 +101,14 @@ PY
 
 # Execute chaos (graceful stop/start only if K>0)
 if [ -s /tmp/killset.txt ]; then
+  mapfile -t VICTIMS < /tmp/killset.txt
   echo "[chaos] killset (p=$P_FAIL, total=$TOTAL):"
-  cat /tmp/killset.txt
+  printf '  %s\n' "${VICTIMS[@]}"
+  docker update --restart=no "${VICTIMS[@]}" >/dev/null 2>&1 || true
   xargs -r -a /tmp/killset.txt -n1 -P4 docker stop --time 1 || true
   sleep "${WINDOW}"
   xargs -r -a /tmp/killset.txt -n1 -P4 docker start || true
+  docker update --restart=unless-stopped "${VICTIMS[@]}" >/dev/null 2>&1 || true
 else
   echo "[chaos] killset empty (total=$TOTAL, p=$P_FAIL)"
   sleep "${WINDOW}"
