@@ -282,7 +282,7 @@ jobs:
                           return json.loads(line)
                       except json.JSONDecodeError:
                           continue
-          raise ValueError(f"Unable to parse JSON in {path}")
+              raise ValueError(f"Unable to parse JSON in {path}")
           chunk_files = sorted(glob.glob('**/summary_*_chunk*.json', recursive=True))
           if not chunk_files:
               print('No chunk summary files found', file=sys.stderr)
