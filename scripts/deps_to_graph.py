@@ -17,9 +17,9 @@ elif isinstance(raw, list):
 else:
     data = []
 
-# Infra/async to prune from synchronous service graph.
-# Kafka/queues are treated as transparent: we remove them but connect their
-# producers и consumers напрямую (см. ниже bridging-логику).
+# Infra/async services to prune from the synchronous graph.
+# Kafka/queues are treated as transparent: we drop those nodes but connect their
+# producers and consumers directly via the bridging logic below.
 SKIP = {
     "frontend-proxy", "jaeger", "grafana", "otel-collector", "zipkin",
     "kafka", "kafka-server", "prometheus", "loadgenerator"
@@ -54,7 +54,7 @@ for item in data:
     nodes.add(pu); nodes.add(pv)
 
 # Determine which nodes should be treated as transparent (skip) while keeping
-# entrypoints even if они совпадают с именами из SKIP.
+# entrypoints even if their normalized names match SKIP entries.
 skip_nodes = {n for n in nodes if n in SKIP and n not in ENTRY_ALLOW}
 
 from collections import defaultdict

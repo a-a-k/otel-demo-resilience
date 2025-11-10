@@ -29,12 +29,12 @@ Artifacts per cell:
 - `summary_<mode>_<p>.json` – aggregate (mean/sd).
 
 ## Notes
-- Мы **держим демо-Локуст** (для нагрузки и телеметрии), но теперь `R_live` определяется **исключительно успешностью фронтовых проб** `cart → checkout`. Сначала снимаются 100 проб, и если часть из них падает — метрика снижается пропорционально (`R_live = probe_ok / probe_total`). Локустовские счётчики всё ещё сохраняем в деталях окна, но они не влияют на итоговую доступность. В CI добавлен baseline health check (без хаоса) — если он не проходит, пайплайн останавливается ещё до экспериментов.  
-- Discovery prefers scraping **Jaeger traces** with `scripts/traces_to_deps.py`; if indexing is still empty it automatically falls back to the `/jaeger/api/dependencies` endpoint.
-- `scripts/deps_to_graph.py` трактует Kafka/прочие очереди как прозрачные: ребро `checkout → kafka → fraud-detection` схлопывается в прямое `checkout → fraud`, чтобы аналитическая модель оставалась блокирующей даже при наличии асинхронных hops.
-- CI bumps Locust’s default load (`LOCUST_USERS=150`, `LOCUST_SPAWN_RATE=30`) and runs `scripts/validate_chaos_live.py` up front (60 s chaos window с задержкой 15 с, HTTP-пробник фронтенда, несколько попыток до ≥80 запросов **или** хотя бы одной неудачной HTTP-проверки при `R_live ≤ 0.99`) — это подтверждает, что контейнеры реально глушатся; итоги попадают в `validation_*.json`.
-- Основной цикл хаоса использует 60‑секундные окна, даёт 15 с на “раскрытие” отказа и только после этого снимает 40‑секундное окно `collect_live.py`, чтобы измерения всегда приходились на период простоя сервисов.
-- В итоговом отчёте GitHub Actions строго контролируется монотонность только для `R_model`; `R_live_mean` выводится для информации и может “прыгать” (например, если хаос не ловится загрузкой).
-- Chaos is implemented as **random container stops** for a fixed window, then automatic restarts, to match a fail‑stop assumption.
+- We keep the demo Locust load so that traffic and telemetry stay warm, but `R_live` is now driven **exclusively by frontend probes** (`cart → checkout`). Each window runs 100 probes; `R_live = probe_ok / probe_total`, while Locust counters are preserved only for debugging. A baseline health check (without chaos) still guards the pipeline before any experiments run.  
+- Discovery prefers scraping **Jaeger traces** with `scripts/traces_to_deps.py`; if indexing is empty it automatically falls back to the `/jaeger/api/dependencies` endpoint.
+- `scripts/deps_to_graph.py` treats Kafka and other queues as transparent hops: an observed chain `checkout → kafka → fraud-detection` becomes a direct `checkout → fraud` edge so that the Monte Carlo model remains blocking even when the runtime uses async transports.
+- CI bumps Locust’s default load (`LOCUST_USERS=150`, `LOCUST_SPAWN_RATE=30`) and runs `scripts/validate_chaos_live.py` up front (60 s chaos window with a 15 s reveal delay, HTTP frontend probes, multiple retries until ≥80 requests **or** a failed probe while `R_live ≤ 0.99`) to prove that chaos actually kills containers; the results land in `validation_*.json`.
+- The primary chaos loop uses 60‑second windows, waits 15 s for the failure to surface, and only then captures a 40‑second window via `collect_live.py` so that metrics cover the outage period.
+- The GitHub Actions summary enforces monotonicity only for `R_model`; `R_live_mean` is informational and may fluctuate if the load misses a failure window.
+- Chaos is implemented as **random container stops** for a fixed window, then automatic restarts, matching a fail‑stop assumption.
 
 See `config/services_allowlist.txt` to decide which app services are eligible for kills; infra (proxy, collector, jaeger, grafana, db/brokers) is excluded by default.
