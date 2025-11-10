@@ -270,18 +270,27 @@ jobs:
 
           def load_json_relaxed(path):
               with open(path, "r", encoding="utf-8") as fh:
-                  body = fh.read()
-              try:
-                  return json.loads(body)
-              except json.JSONDecodeError:
-                  for line in body.splitlines():
-                      line = line.strip()
-                      if not line:
-                          continue
-                      try:
-                          return json.loads(line)
-                      except json.JSONDecodeError:
-                          continue
+                  data = fh.read()
+              decoder = json.JSONDecoder()
+              idx = 0
+              while idx < len(data):
+                  brace = data.find("{", idx)
+                  if brace == -1:
+                      break
+                  try:
+                      obj, end = decoder.raw_decode(data, brace)
+                      return obj
+                  except json.JSONDecodeError:
+                      idx = brace + 1
+                      continue
+              for line in data.splitlines():
+                  line = line.strip()
+                  if not line:
+                      continue
+                  try:
+                      return json.loads(line)
+                  except json.JSONDecodeError:
+                      continue
               raise ValueError(f"Unable to parse JSON in {path}")
           chunk_files = sorted(glob.glob('**/summary_*_chunk*.json', recursive=True))
           if not chunk_files:
