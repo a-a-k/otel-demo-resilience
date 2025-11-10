@@ -229,7 +229,8 @@ if __name__ == "__main__":
     failures_other = max(0, d.get("failures", 0) - d.get("five_xx", 0))
     bad = d.get("five_xx", 0) + d.get("transport", 0) + failures_other
     good = max(0, d["total"] - bad)
-    R_live = (good / d["total"]) if d["total"] else 0.0
+    R_live_locust = (good / d["total"]) if d["total"] else 0.0
+    R_live = R_live_locust
     latency_bad = False
     if meta1.get("p95", 0) >= a.latency_p95_threshold:
         latency_bad = True
@@ -244,8 +245,10 @@ if __name__ == "__main__":
     detail["latency_median"] = meta1.get("median")
     detail["latency_bad"] = latency_bad
     detail["zero_traffic"] = zero_traffic
+    detail["locust_ratio"] = R_live_locust
 
     probe_detail = []
+    measurement_mode = "locust"
     if a.probe_frontend:
         ok_probe, total_probe, probe_detail = frontend_probe(
             a.probe_frontend,
@@ -256,8 +259,10 @@ if __name__ == "__main__":
         detail["probe_total"] = total_probe
         detail["probe_detail"] = probe_detail
         if total_probe > 0:
-            R_live = min(R_live, ok_probe / total_probe)
-            detail["probe_ratio"] = ok_probe / total_probe
+            probe_ratio = ok_probe / total_probe
+            detail["probe_ratio"] = probe_ratio
+            R_live = probe_ratio
+            measurement_mode = "probes"
 
     killed_services = []
     last_log = {}
@@ -267,6 +272,7 @@ if __name__ == "__main__":
             last_log = entries[-1]
             killed_services = last_log.get("services") or []
     detail["killed_services"] = killed_services
+    detail["measurement_mode"] = measurement_mode
     out = {"R_live": R_live, "detail": detail, "window_log": last_log}
     with open(a.out, "w") as f: json.dump(out, f)
     print(json.dumps(out))

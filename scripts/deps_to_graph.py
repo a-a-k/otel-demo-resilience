@@ -17,7 +17,9 @@ elif isinstance(raw, list):
 else:
     data = []
 
-# Infra/async to prune from synchronous service graph
+# Infra/async to prune from synchronous service graph.
+# Kafka/queues are treated as transparent: we remove them but connect their
+# producers и consumers напрямую (см. ниже bridging-логику).
 SKIP = {
     "frontend-proxy", "jaeger", "grafana", "otel-collector", "zipkin",
     "kafka", "kafka-server", "prometheus", "loadgenerator"
@@ -38,6 +40,7 @@ entry = [
 ENTRY_ALLOW = set(entry)
 
 edges = []
+nodes = set()
 for item in data:
     # tolerate aliases found in Jaeger deps/traces payloads
     parent = item.get("parent") or item.get("caller") or item.get("p")
@@ -45,18 +48,80 @@ for item in data:
     if not parent or not child:
         continue
     pu, pv = norm(parent), norm(child)
-    if (pu in SKIP and pu not in ENTRY_ALLOW) or (pv in SKIP and pv not in ENTRY_ALLOW):
-        continue
     if pu == pv:
         continue
     edges.append((pu, pv))
+    nodes.add(pu); nodes.add(pv)
+
+# Determine which nodes should be treated as transparent (skip) while keeping
+# entrypoints even if они совпадают с именами из SKIP.
+skip_nodes = {n for n in nodes if n in SKIP and n not in ENTRY_ALLOW}
+
+from collections import defaultdict
+
+adj = defaultdict(set)
+radj = defaultdict(set)
+for u, v in edges:
+    adj[u].add(v)
+    radj[v].add(u)
+
+import functools
+
+@functools.lru_cache(maxsize=None)
+def expand_forward(node):
+    """Return non-skip descendants reachable via only skip nodes."""
+    out = set()
+    for nxt in adj.get(node, ()):
+        if nxt in skip_nodes:
+            out |= expand_forward(nxt)
+        else:
+            out.add(nxt)
+    return out
+
+@functools.lru_cache(maxsize=None)
+def expand_backward(node):
+    """Return non-skip ancestors that reach node via only skip nodes."""
+    out = set()
+    for prev in radj.get(node, ()):
+        if prev in skip_nodes:
+            out |= expand_backward(prev)
+        else:
+            out.add(prev)
+    return out
+
+filtered = set()
+for u, v in edges:
+    su = u in skip_nodes
+    sv = v in skip_nodes
+    if not su and not sv:
+        filtered.add((u, v))
+        continue
+    if not su and sv:
+        targets = expand_forward(v)
+        for t in targets:
+            filtered.add((u, t))
+        continue
+    if su and not sv:
+        sources = expand_backward(u)
+        for s in sources:
+            filtered.add((s, v))
+        continue
+    if su and sv:
+        sources = expand_backward(u)
+        targets = expand_forward(v)
+        for s in sources:
+            for t in targets:
+                filtered.add((s, t))
+
+# drop edges that still touch skip nodes (no reachable non-skip endpoints)
+filtered = {(u, v) for (u, v) in filtered if u not in skip_nodes and v not in skip_nodes}
 
 # build node index
-V = sorted({u for u, v in edges} | {v for u, v in edges})
+V = sorted({u for u, v in filtered} | {v for u, v in filtered})
 idx = {v: i for i, v in enumerate(V)}
 
 # unique directed edges on normalized ids
-E = sorted({(idx[u], idx[v]) for u, v in edges})
+E = sorted({(idx[u], idx[v]) for u, v in filtered})
 
 # entrypoints → ids (ignore missing ones gracefully)
 entry_ids = [idx[e] for e in entry if e in idx]

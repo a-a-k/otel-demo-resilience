@@ -26,11 +26,11 @@ fi
 if [ -f "$ALLOWLIST" ] && [ ${#compose_rows[@]} -gt 0 ]; then
   while IFS= read -r svc; do
     [[ -z "$svc" || "$svc" =~ ^# ]] && continue
-    svc_norm=$(echo "$svc" | tr '[:upper:]' '[:lower:]' | sed -E 's/_/-/g; s/(-)?service$//')
+    svc_norm=$(echo "$svc" | tr '[:upper:]' '[:lower:]' | sed -E 's/_/-/g; s/(-)?service$//; s/-detection$//')
     for row in "${compose_rows[@]}"; do
       name=$(echo "$row" | awk '{print $1}')
       lab=$(echo "$row" | awk '{print $2}')
-      lab_norm=$(echo "$lab" | tr '[:upper:]' '[:lower:]' | sed -E 's/_/-/g; s/(-)?service$//')
+      lab_norm=$(echo "$lab" | tr '[:upper:]' '[:lower:]' | sed -E 's/_/-/g; s/(-)?service$//; s/-detection$//')
       if [[ "$lab_norm" == "$svc_norm" && -n "$name" ]]; then
         CANDIDATES+=("$name")
       fi
