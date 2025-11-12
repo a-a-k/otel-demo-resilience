@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, argparse, sys
+import json, argparse, sys, os
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--deps", required=True)
@@ -20,10 +20,18 @@ else:
 # Infra/async services to prune from the synchronous graph.
 # Kafka/queues are treated as transparent: we drop those nodes but connect their
 # producers and consumers directly via the bridging logic below.
-SKIP = {
+graph_mode = os.getenv("DEPS_GRAPH_MODE", "all-block").strip().lower()
+if graph_mode not in {"all-block", "async"}:
+    graph_mode = "all-block"
+
+SKIP_BASE = {
     "frontend-proxy", "jaeger", "grafana", "otel-collector", "zipkin",
-    "kafka", "kafka-server", "prometheus", "loadgenerator", "load-generator"
+    "prometheus", "loadgenerator", "load-generator"
 }
+if graph_mode != "async":
+    SKIP = set(SKIP_BASE) | {"kafka", "kafka-server"}
+else:
+    SKIP = set(SKIP_BASE)
 
 def norm(s: str) -> str:
     s = str(s).strip().lower().replace("_", "-")

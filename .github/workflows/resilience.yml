@@ -151,9 +151,8 @@ jobs:
           [ "$(jq 'length' deps.json)" -gt 0 ] || (echo "deps.json empty" >&2; exit 1)
 
       - name: Build graph.json (deps → G)
-        env:
-          DEPS_GRAPH_MODE: ${{ matrix.mode }}
         run: |
+          export DEPS_GRAPH_MODE="${{ matrix.mode }}"
           python3 scripts/deps_to_graph.py \
             --deps deps.json \
             --entrypoints config/entrypoints.txt \
