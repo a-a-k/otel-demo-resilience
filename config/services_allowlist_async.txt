@@ -1,0 +1,18 @@
+# Application services eligible for fail-stop kills in async mode (Kafka included)
+checkout
+product-catalog
+cart
+payment
+recommendation
+shipping
+currency
+ad
+email
+fraud
+accounting
+flagd
+product-reviews
+quote
+kafka
+# Infra/entrypoints intentionally excluded:
+# frontend, frontend-proxy, jaeger, grafana, otel-collector, prometheus, loadgenerator

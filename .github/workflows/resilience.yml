@@ -43,6 +43,7 @@ jobs:
       HEALTH_CHECK_PROBE_ATTEMPTS: "10"
       LOCUST_USERS: "150"
       LOCUST_SPAWN_RATE: "30"
+      ALLOWLIST_FILE: ${{ matrix.mode == 'async' && 'config/services_allowlist_async.txt' || 'config/services_allowlist.txt' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -117,7 +118,7 @@ jobs:
         run: |
           python3 scripts/validate_chaos_live.py \
             --locust "http://localhost:${ENVOY_PORT}/loadgen" \
-            --allowlist config/services_allowlist.txt \
+            --allowlist "${ALLOWLIST_FILE}" \
             --window "${VALIDATION_WINDOW_SECONDS}" \
             --collect-window "${VALIDATION_COLLECT_WINDOW_SECONDS}" \
             --collect-delay "${VALIDATION_COLLECT_DELAY_SECONDS}" \
@@ -180,7 +181,7 @@ jobs:
           : > "$WINDOW_LOG"
           for i in $(seq 1 "${WINDOWS}"); do
             echo "::group::window chunk=${CHUNK} idx=$i"
-            bash scripts/compose_chaos.sh "${P_FAIL}" config/services_allowlist.txt "${CHAOS_WINDOW_SECONDS}" "$WINDOW_LOG" &
+            bash scripts/compose_chaos.sh "${P_FAIL}" "${ALLOWLIST_FILE}" "${CHAOS_WINDOW_SECONDS}" "$WINDOW_LOG" &
             CHAOS_PID=$!
             sleep "${CHAOS_MEASURE_DELAY_SECONDS}"
             python3 scripts/collect_live.py \
