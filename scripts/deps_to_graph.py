@@ -28,10 +28,9 @@ SKIP_BASE = {
     "frontend-proxy", "jaeger", "grafana", "otel-collector", "zipkin",
     "prometheus", "loadgenerator", "load-generator"
 }
+SKIP = set(SKIP_BASE)
 if graph_mode != "async":
-    SKIP = set(SKIP_BASE) | {"kafka", "kafka-server"}
-else:
-    SKIP = set(SKIP_BASE)
+    SKIP |= {"kafka", "kafka-server"}
 
 def norm(s: str) -> str:
     s = str(s).strip().lower().replace("_", "-")
@@ -40,12 +39,31 @@ def norm(s: str) -> str:
             s = s[: -len(suf)]
     return s
 
+def load_name_set(path):
+    out = set()
+    if not path:
+        return out
+    try:
+        with open(path) as fh:
+            for line in fh:
+                line=line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                out.add(norm(line))
+    except FileNotFoundError:
+        return set()
+    return out
+
 entry = [
     norm(x)
     for x in open(a.entrypoints)
     if x.strip() and not x.startswith("#")
 ]
 ENTRY_ALLOW = set(entry)
+
+forced_targets = set()
+if graph_mode == "async":
+    forced_targets = load_name_set(os.getenv("ASYNC_TARGETS_FILE") or os.getenv("TARGET_FILE"))
 
 edges = []
 nodes = set()
@@ -60,6 +78,19 @@ for item in data:
         continue
     edges.append((pu, pv))
     nodes.add(pu); nodes.add(pv)
+
+if graph_mode == "async" and forced_targets:
+    producer = "checkout"
+    kafka_name = "kafka"
+    nodes.add(kafka_name)
+    for tgt in forced_targets:
+        nodes.add(tgt)
+    # ensure edges from producer -> kafka and kafka -> targets
+    if producer in nodes:
+        edges.append((producer, kafka_name))
+    for tgt in forced_targets:
+        if tgt in nodes:
+            edges.append((kafka_name, tgt))
 
 # Determine which nodes should be treated as transparent (skip) while keeping
 # entrypoints even if their normalized names match SKIP entries.

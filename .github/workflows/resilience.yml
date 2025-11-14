@@ -149,6 +149,7 @@ jobs:
       - name: Build graph.json (deps → G)
         run: |
           export DEPS_GRAPH_MODE="${{ matrix.mode }}"
+          export ASYNC_TARGETS_FILE="${TARGET_FILE}"
           python3 scripts/deps_to_graph.py \
             --deps deps.json \
             --entrypoints config/entrypoints.txt \
