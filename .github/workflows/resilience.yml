@@ -44,6 +44,7 @@ jobs:
       LOCUST_USERS: "150"
       LOCUST_SPAWN_RATE: "30"
       ALLOWLIST_FILE: ${{ matrix.mode == 'async' && 'config/services_allowlist_async.txt' || 'config/services_allowlist.txt' }}
+      TARGET_FILE: ${{ matrix.mode == 'async' && 'config/async_targets.txt' || '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -163,10 +164,14 @@ jobs:
       - name: Run Monte-Carlo estimator (R_model)
         run: |
           MODE="${MODE}"
+          TARGET_ARGS=""
+          if [ -n "${TARGET_FILE}" ]; then
+            TARGET_ARGS="--targets ${TARGET_FILE}"
+          fi
           python3 scripts/resilience.py \
             --graph graph.json --replicas replicas.json \
             --p "${{ matrix.p_fail }}" --samples "${SAMPLES}" \
-            --out "model_mode${MODE}_p${{ matrix.p_fail }}.json"
+            --out "model_mode${MODE}_p${{ matrix.p_fail }}.json" $TARGET_ARGS
 
       - name: Chaos windows + R_live from Locust
         env:

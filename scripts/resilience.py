@@ -8,16 +8,38 @@ ap.add_argument("--replicas", required=True)
 ap.add_argument("--p", type=float, required=True)
 ap.add_argument("--samples", type=int, default=120000)
 ap.add_argument("--out", required=True)
+ap.add_argument("--targets", help="Optional file with newline-separated service names treated as required sinks.")
 a = ap.parse_args()
 
 G = json.load(open(a.graph))
 V = G["services"]; E = G["edges"]; entry = G["entrypoints"]
 replicas = json.load(open(a.replicas))
 
+def norm(s: str) -> str:
+    return str(s).strip().lower().replace("_", "-")
+
+target_set = set()
+if a.targets:
+    try:
+        names = [
+            norm(line)
+            for line in open(a.targets)
+            if line.strip() and not line.startswith("#")
+        ]
+        name_to_idx = {norm(name): idx for idx, name in enumerate(V)}
+        target_set = {name_to_idx[n] for n in names if n in name_to_idx}
+    except FileNotFoundError:
+        target_set = set()
+
+entry = [e for e in entry if e < len(V)]
+
 adj = [[] for _ in range(len(V))]
-for u,v in E:
-    adj[u].append(v)
+for u, v in E:
+    if u < len(V) and v < len(V):
+        adj[u].append(v)
 sinks = [len(adj[i]) == 0 for i in range(len(V))]
+if target_set:
+    sinks = [i in target_set for i in range(len(V))]
 
 def bfs_ok(alive, start):
     if start >= len(alive) or not alive[start]:
