@@ -14,6 +14,8 @@ BASES = [b.strip().rstrip("/") for b in os.getenv(
 ).split(",") if b.strip()]
 
 HDR = {"Accept":"application/json"}
+TRACE_SAMPLES = []
+TRACE_SAMPLE_LIMIT = 10
 
 def log(msg: str) -> None:
     print(msg, file=sys.stderr)
@@ -68,6 +70,13 @@ def fetch_edges(services, lookback_min=None, limit=1000):
                     name = (procs.get(pid) or {}).get("serviceName")
                     if name:
                         svc_by_span[sp.get("spanID")] = name
+                if len(TRACE_SAMPLES) < TRACE_SAMPLE_LIMIT:
+                    sample = {
+                        "traceID": trace.get("traceID") or trace.get("traceid") or "",
+                        "services": sorted({s for s in svc_by_span.values() if s}),
+                        "spanCount": len(spans)
+                    }
+                    TRACE_SAMPLES.append(sample)
                 added = 0
                 # edges via references or parentSpanId
                 for sp in spans:
@@ -147,6 +156,10 @@ def main():
         return
     log("Trace scraping found zero edges; exiting (traces-only mode)." +
         (" (--fail-on-empty flag set)" if args.fail_on_empty else ""))
+    if TRACE_SAMPLES:
+        log("Sample of traces observed despite zero edges: " + json.dumps(TRACE_SAMPLES, indent=2))
+    else:
+        log("No traces were returned from Jaeger during scraping attempts.")
     print("[]")
     sys.exit(1)
 
