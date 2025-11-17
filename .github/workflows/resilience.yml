@@ -27,6 +27,7 @@ jobs:
       WINDOWS: "10"
       SAMPLES: "120000"
       OTEL_DEMO_REF: "main"
+      TRACES_TIMEOUT: "600"
       VALIDATION_WINDOW_SECONDS: "60"
       VALIDATION_COLLECT_WINDOW_SECONDS: "40"
       VALIDATION_COLLECT_DELAY_SECONDS: "15"
@@ -135,6 +136,10 @@ jobs:
             --probe-frontend "http://localhost:${ENVOY_PORT}" \
             --probe-attempts 100 \
             --probe-checkout
+
+      - name: Ensure trace traffic before dependency build
+        run: |
+          python3 scripts/warmup.py --locust "http://localhost:${ENVOY_PORT}/loadgen" --timeout 300
 
       - name: Build deps from traces (no /dependencies)
         run: |
