@@ -117,7 +117,8 @@ def main():
     parser.add_argument("--chunk", required=True)
     parser.add_argument("--rows-out", default="reports/rows.csv")
     parser.add_argument("--overall-out", default="reports/overall.json")
-    parser.add_argument("--mode", default="all-block")  # unused placeholder
+    parser.add_argument("--live-pattern", help="Glob for live R_live files; defaults to live_p{p}_chunk{chunk}_*.json")
+    parser.add_argument("--window-log", help="Path to window log JSONL for chaos seed lookup")
     args = parser.parse_args()
 
     p_fail = args.p_fail
@@ -133,11 +134,10 @@ def main():
     graph_hash = graph_hash_block or graph_hash_async
 
     model_seed = model_block.get("seed")
-    chaos_seed = read_chaos_seed(
-        f"window_log_modeall-block_p{p_fail}_chunk{chunk}.jsonl"
-    )
+    window_log_path = args.window_log or f"window_log_p{p_fail}_chunk{chunk}.jsonl"
+    chaos_seed = read_chaos_seed(window_log_path)
 
-    live_pattern = f"live_modeall-block_p{p_fail}_chunk{chunk}_*.json"
+    live_pattern = args.live_pattern or f"live_p{p_fail}_chunk{chunk}_*.json"
     r_live_values = read_live_values(live_pattern)
     windows = len(r_live_values)
     if windows == 0:
@@ -199,6 +199,8 @@ def main():
         "wilcoxon_pvalue": wilcoxon_p,
         "cliffs_delta": delta_effect,
         "model_seed": model_seed,
+        "R_model_all_block": r_model_block,
+        "R_model_async": r_model_async,
         "chaos_seed": chaos_seed,
     }
 

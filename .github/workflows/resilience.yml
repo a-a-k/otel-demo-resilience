@@ -218,11 +218,11 @@ jobs:
           CHUNK_ID: ${{ matrix.chunk }}
         run: |
           python3 -m pip install --quiet requests
-          BASE_WINDOW_LOG="window_log_p${P_FAIL}_chunk${CHUNK_ID}.jsonl"
-          : > "$BASE_WINDOW_LOG"
+          WINDOW_LOG="window_log_p${P_FAIL}_chunk${CHUNK_ID}.jsonl"
+          : > "$WINDOW_LOG"
           for i in $(seq 1 "${WINDOWS}"); do
             echo "::group::chunk=${CHUNK_ID} idx=$i"
-            bash scripts/compose_chaos.sh "${P_FAIL}" "${ALLOWLIST_FILE}" "${CHAOS_WINDOW_SECONDS}" "$BASE_WINDOW_LOG" &
+            bash scripts/compose_chaos.sh "${P_FAIL}" "${ALLOWLIST_FILE}" "${CHAOS_WINDOW_SECONDS}" "$WINDOW_LOG" &
             CHAOS_PID=$!
             sleep "${CHAOS_MEASURE_DELAY_SECONDS}"
             python3 scripts/collect_live.py \
@@ -232,18 +232,10 @@ jobs:
               --probe-frontend "http://localhost:${ENVOY_PORT}" \
               --probe-attempts 10 \
               --probe-checkout \
-              --window-log "$BASE_WINDOW_LOG" \
+              --window-log "$WINDOW_LOG" \
               --out "live_p${P_FAIL}_chunk${CHUNK_ID}_${i}.json"
             wait $CHAOS_PID || true
             echo "::endgroup::"
-          done
-          for MODE in all-block async; do
-            cp "$BASE_WINDOW_LOG" "window_log_mode${MODE}_p${P_FAIL}_chunk${CHUNK_ID}.jsonl"
-            for f in live_p${P_FAIL}_chunk${CHUNK_ID}_*.json; do
-              [ -f "$f" ] || continue
-              suffix="${f#live_p${P_FAIL}_chunk${CHUNK_ID}_}"
-              cp "$f" "live_mode${MODE}_p${P_FAIL}_chunk${CHUNK_ID}_${suffix}"
-            done
           done
 
       - name: Summarize chunk
@@ -255,20 +247,18 @@ jobs:
           import glob, json, os
           p=os.environ["P_FAIL"]
           chunk=os.environ["CHUNK_ID"]
-          for mode in ("all-block", "async"):
-              files=sorted(glob.glob(f"live_mode{mode}_p{p}_chunk{chunk}_*.json"))
-              vals=[json.load(open(f))["R_live"] for f in files]
-              summary={
-                  "mode": mode,
-                  "p_fail": float(p),
-                  "p_fail_str": p,
-                  "chunk": int(chunk),
-                  "windows": len(vals),
-                  "sum": sum(vals),
-                  "sum_sq": sum(v*v for v in vals)
-              }
-              json.dump(summary, open(f"summary_mode{mode}_p{p}_chunk{chunk}.json","w"))
-              print(summary)
+          files=sorted(glob.glob(f"live_p{p}_chunk{chunk}_*.json"))
+          vals=[json.load(open(f))["R_live"] for f in files]
+          summary={
+              "p_fail": float(p),
+              "p_fail_str": p,
+              "chunk": int(chunk),
+              "windows": len(vals),
+              "sum": sum(vals),
+              "sum_sq": sum(v*v for v in vals)
+          }
+          json.dump(summary, open(f"summary_p{p}_chunk{chunk}.json","w"))
+          print(summary)
           PY
 
       - name: Print chunk summary
@@ -279,11 +269,10 @@ jobs:
           python3 - << 'PY'
           import json, os
           p=os.environ['P_FAIL']; chunk=os.environ['CHUNK_ID']
-          for mode in ("all-block", "async"):
-              data=json.load(open(f"summary_mode{mode}_p{p}_chunk{chunk}.json"))
-              total=data['windows']
-              mean=(data['sum']/total) if total else 0.0
-              print(f"mode={mode} chunk={chunk} p={p} windows={total} mean={mean:.4f}")
+          data=json.load(open(f"summary_p{p}_chunk{chunk}.json"))
+          total=data['windows']
+          mean=(data['sum']/total) if total else 0.0
+          print(f"chunk={chunk} p={p} windows={total} mean={mean:.4f}")
           PY
 
       - name: Summarize model vs live
@@ -294,8 +283,10 @@ jobs:
           python3 scripts/summarize_results.py \
             --p-fail "${P_FAIL}" \
             --chunk "${CHUNK_ID}" \
-            --rows-out reports/rows.csv \
-            --overall-out reports/overall.json
+            --live-pattern "live_p${P_FAIL}_chunk${CHUNK_ID}_*.json" \
+            --window-log "window_log_p${P_FAIL}_chunk${CHUNK_ID}.jsonl" \
+            --rows-out "reports/rows_p${P_FAIL}_chunk${CHUNK_ID}.csv" \
+            --overall-out "reports/overall_p${P_FAIL}_chunk${CHUNK_ID}.json"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -308,14 +299,11 @@ jobs:
             replicas.json
             model_modeall-block_p${{ matrix.p_fail }}.json
             model_modeasync_p${{ matrix.p_fail }}.json
-            live_modeall-block_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}_*.json
-            live_modeasync_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}_*.json
-            summary_modeall-block_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.json
-            summary_modeasync_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.json
-            window_log_modeall-block_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.jsonl
-            window_log_modeasync_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.jsonl
-            reports/rows.csv
-            reports/overall.json
+            live_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}_*.json
+            summary_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.json
+            window_log_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.jsonl
+            reports/rows_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.csv
+            reports/overall_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.json
             validation_summary.json
             validation_live.json
             validation_window_log.jsonl
@@ -360,23 +348,30 @@ jobs:
                       idx += 1
                       continue
               raise ValueError(f"Unable to parse JSON in {path}")
-          chunk_files = sorted(glob.glob('**/summary_*_chunk*.json', recursive=True))
-          if not chunk_files:
-              print('No chunk summary files found', file=sys.stderr)
+          live_summary_files = sorted(glob.glob('**/summary_p*_chunk*.json', recursive=True))
+          if not live_summary_files:
+              print('No live summary files found', file=sys.stderr)
               sys.exit(1)
-          agg = {}
-          for f in chunk_files:
+          live_agg = {}
+          p_labels = {}
+          for f in live_summary_files:
               s = load_json_relaxed(f)
               p = float(s['p_fail'])
-              mode = s.get('mode', 'default')
               p_str = s.get('p_fail_str', str(p))
-              key = (mode, p)
-              data = agg.setdefault(key, {'sum':0.0,'sum_sq':0.0,'n':0,'p_str':p_str})
-              data['sum'] += s['sum']
-              data['sum_sq'] += s['sum_sq']
-              data['n'] += s['windows']
+              entry = live_agg.setdefault(p, {'sum':0.0,'sum_sq':0.0,'n':0})
+              entry['sum'] += s['sum']
+              entry['sum_sq'] += s['sum_sq']
+              entry['n'] += s['windows']
+              p_labels[p] = p_str
+          def model_value(mode, p_label):
+              paths = glob.glob(f"**/model_mode{mode}_p{p_label}.json", recursive=True)
+              if not paths:
+                  print(f"Missing model file for mode={mode} p={p_label}", file=sys.stderr)
+                  sys.exit(1)
+              return load_json_relaxed(paths[0])['R_model']
           rows = []
-          for (mode, p), data in agg.items():
+          for p, data in live_agg.items():
+              p_label = p_labels[p]
               n = data['n']
               if n == 0:
                   mean = 0.0
@@ -385,28 +380,27 @@ jobs:
                   mean = data['sum']/n
                   variance = max(0.0, data['sum_sq']/n - mean*mean)
                   sd = math.sqrt(variance)
-              p_label = data['p_str']
-              model_paths = glob.glob(f"**/model_mode{mode}_p{p_label}.json", recursive=True)
-              if not model_paths:
-                  print(f"Missing model file for mode={mode} p={p_label}", file=sys.stderr)
-                  sys.exit(1)
-              rm = load_json_relaxed(model_paths[0])['R_model']
-              rows.append((mode, p, p_label, rm, mean, sd, n))
+              rm_block = model_value('all-block', p_label)
+              rm_async = model_value('async', p_label)
+              rows.append(('all-block', p, p_label, rm_block, mean, sd, n))
+              rows.append(('async', p, p_label, rm_async, mean, sd, n))
+          rl_series = sorted((p, (data['sum']/data['n']) if data['n'] else 0.0) for p, data in live_agg.items())
+          ok_live = True
+          prev_rl = None
+          for p, mean in rl_series:
+              if prev_rl is not None and mean > prev_rl + 1e-9:
+                  ok_live = False
+              prev_rl = mean
           rows.sort(key=lambda x: (x[0], x[1]))
           print('mode\tp\tR_model\tR_live_mean\tR_live_sd\tN')
           ok_model = True
-          ok_live = True
           prev_rm = {}
-          prev_rl = {}
           for mode, p, p_label, rm, rl, sd, n in rows:
               print(f"{mode}\t{p:.1f}\t{rm:.4f}\t{rl:.4f}\t{sd:.4f}\t{n}")
               prev_rm.setdefault(mode, None)
-              prev_rl.setdefault(mode, None)
               if prev_rm[mode] is not None and rm > prev_rm[mode] + 1e-9:
                   ok_model = False
-              if prev_rl[mode] is not None and rl > prev_rl[mode] + 1e-9:
-                  ok_live = False
-              prev_rm[mode], prev_rl[mode] = rm, rl
+              prev_rm[mode] = rm
           if not ok_model:
               print('Monotonicity check failed: R_model is not non-increasing with p_fail (per mode)', file=sys.stderr)
               sys.exit(1)
