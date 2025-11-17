@@ -141,6 +141,16 @@ jobs:
         run: |
           python3 scripts/warmup.py --locust "http://localhost:${ENVOY_PORT}/loadgen" --timeout 300
 
+      - name: Manual traffic burst (ensure traces)
+        run: |
+          echo "Sending manual requests to frontend to stimulate traces"
+          for i in $(seq 1 200); do
+            curl -fsS "http://localhost:${ENVOY_PORT}/" >/dev/null || true
+            curl -fsS "http://localhost:${ENVOY_PORT}/cart" >/dev/null || true
+            curl -fsS "http://localhost:${ENVOY_PORT}/product/0PUK6V6EV0" >/dev/null || true
+            sleep 0.2
+          done
+
       - name: Build deps from traces (no /dependencies)
         run: |
           python3 scripts/traces_to_deps.py --fail-on-empty > deps.json
