@@ -16,6 +16,7 @@ BASES = [b.strip().rstrip("/") for b in os.getenv(
 HDR = {"Accept":"application/json"}
 TRACE_SAMPLES = []
 TRACE_SAMPLE_LIMIT = 10
+FETCH_STATS = {b: {"errors": 0, "empty": 0, "traces": 0} for b in BASES}
 
 def log(msg: str) -> None:
     print(msg, file=sys.stderr)
@@ -57,12 +58,16 @@ def fetch_edges(services, lookback_min=None, limit=1000):
             try:
                 payload = get_json(f"{b}/traces?{qs}")
             except Exception:
+                FETCH_STATS[b]["errors"] += 1
                 continue
             if not payload:
+                FETCH_STATS[b]["empty"] += 1
                 continue
             traces = payload.get("data") or []
             if not traces:
+                FETCH_STATS[b]["empty"] += 1
                 continue
+            FETCH_STATS[b]["traces"] += len(traces)
             for trace in traces:
                 procs = trace.get("processes", {})
                 spans = trace.get("spans", [])
@@ -131,8 +136,11 @@ def main():
     args = ap.parse_args()
 
     svcs = discover_services()
+    if svcs:
+        log(f"Discovered services from Jaeger: {svcs}")
     # Fallback: try common OTel Demo backend services if /services is empty
     if not svcs:
+        log("Jaeger /services returned empty; falling back to predefined service list")
         svcs = [
             'checkoutservice','productcatalogservice','cartservice','paymentservice',
             'recommendationservice','shippingservice','currencyservice','adservice',
@@ -163,6 +171,8 @@ def main():
         log("Sample of traces observed despite zero edges: " + json.dumps(TRACE_SAMPLES, indent=2))
     else:
         log("No traces were returned from Jaeger during scraping attempts.")
+    if FETCH_STATS:
+        log("Fetch stats per base: " + json.dumps(FETCH_STATS, indent=2))
     print("[]")
     sys.exit(1)
 
