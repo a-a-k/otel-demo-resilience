@@ -270,6 +270,17 @@ jobs:
               print(f"mode={mode} chunk={chunk} p={p} windows={total} mean={mean:.4f}")
           PY
 
+      - name: Summarize model vs live
+        env:
+          P_FAIL: ${{ matrix.p_fail }}
+          CHUNK_ID: ${{ matrix.chunk }}
+        run: |
+          python3 scripts/summarize_results.py \
+            --p-fail "${P_FAIL}" \
+            --chunk "${CHUNK_ID}" \
+            --rows-out reports/rows.csv \
+            --overall-out reports/overall.json
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -287,6 +298,8 @@ jobs:
             summary_modeasync_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.json
             window_log_modeall-block_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.jsonl
             window_log_modeasync_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.jsonl
+            reports/rows.csv
+            reports/overall.json
             validation_summary.json
             validation_live.json
             validation_window_log.jsonl
