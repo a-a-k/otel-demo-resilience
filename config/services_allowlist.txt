@@ -13,5 +13,6 @@ accounting
 flagd
 product-reviews
 quote
+kafka
 # Infra/entrypoints intentionally excluded:
-# frontend, frontend-proxy, jaeger, grafana, otel-collector, kafka, prometheus, loadgenerator
+# frontend, frontend-proxy, jaeger, grafana, otel-collector, prometheus, loadgenerator

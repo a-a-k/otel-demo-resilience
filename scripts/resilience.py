@@ -8,11 +8,23 @@ ap.add_argument("--replicas", required=True)
 ap.add_argument("--p", type=float, required=True)
 ap.add_argument("--samples", type=int, default=120000)
 ap.add_argument("--out", required=True)
+ap.add_argument("--mode", choices=["all-block", "async"], default="all-block",
+                help="Failure semantics: block on all edges or treat async edges (kafka) as non-blocking.")
 ap.add_argument("--targets", help="Optional file with newline-separated service names treated as required sinks.")
 a = ap.parse_args()
 
 G = json.load(open(a.graph))
 V = G["services"]; E = G["edges"]; entry = G["entrypoints"]
+async_edges_raw = G.get("async_edges") or []
+async_edges = set()
+for pair in async_edges_raw:
+    if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+        continue
+    try:
+        u = int(pair[0]); v = int(pair[1])
+    except (TypeError, ValueError):
+        continue
+    async_edges.add((u, v))
 replicas = json.load(open(a.replicas))
 
 def norm(s: str) -> str:
@@ -35,7 +47,11 @@ entry = [e for e in entry if e < len(V)]
 
 adj = [[] for _ in range(len(V))]
 for u, v in E:
-    if u < len(V) and v < len(V):
+    if not isinstance(u, int) or not isinstance(v, int):
+        continue
+    if 0 <= u < len(V) and 0 <= v < len(V):
+        if a.mode == "async" and (u, v) in async_edges:
+            continue
         adj[u].append(v)
 sinks = [len(adj[i]) == 0 for i in range(len(V))]
 if target_set:

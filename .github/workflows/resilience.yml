@@ -43,7 +43,7 @@ jobs:
       HEALTH_CHECK_PROBE_ATTEMPTS: "10"
       LOCUST_USERS: "150"
       LOCUST_SPAWN_RATE: "30"
-      ALLOWLIST_FILE: ${{ matrix.mode == 'async' && 'config/services_allowlist_async.txt' || 'config/services_allowlist.txt' }}
+      ALLOWLIST_FILE: 'config/services_allowlist.txt'
       TARGET_FILE: ${{ matrix.mode == 'async' && 'config/async_targets.txt' || '' }}
 
     steps:
