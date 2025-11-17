@@ -60,7 +60,10 @@ def fetch_edges(services, lookback_min=None, limit=1000):
                 continue
             if not payload:
                 continue
-            for trace in payload.get("data", []):
+            traces = payload.get("data") or []
+            if not traces:
+                continue
+            for trace in traces:
                 procs = trace.get("processes", {})
                 spans = trace.get("spans", [])
                 # spanID -> serviceName
