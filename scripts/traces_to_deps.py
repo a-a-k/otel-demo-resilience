@@ -5,7 +5,6 @@ import argparse, os, time, json, urllib.parse, urllib.request, sys
 
 ENVOY_PORT = os.getenv("ENVOY_PORT","8080")
 LOOKBACK_MIN = int(os.getenv("LOOKBACK_MINUTES","30"))
-END_MS = int(time.time()*1000)
 BASES = [b.strip().rstrip("/") for b in os.getenv(
     "JAEGER_BASES",
     f"http://localhost:{ENVOY_PORT}/jaeger/api,"
@@ -51,9 +50,9 @@ def discover_services():
 def fetch_edges(services, lookback_min=None, limit=1000):
     edges = {}
     lookback_m = f"{max(1, lookback_min if lookback_min is not None else LOOKBACK_MIN)}m"
-    end_ms = int(time.time()*1000)
+    end_us = int(time.time()*1_000_000)
     for svc in services:
-        qs = f"service={urllib.parse.quote(svc)}&lookback={lookback_m}&end={end_ms}&limit={int(limit)}"
+        qs = f"service={urllib.parse.quote(svc)}&lookback={lookback_m}&end={end_us}&limit={int(limit)}"
         for b in BASES:
             try:
                 payload = get_json(f"{b}/traces?{qs}")
