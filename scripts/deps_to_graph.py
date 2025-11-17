@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, argparse, sys, os
+import json, argparse, sys
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--deps", required=True)
@@ -17,20 +17,11 @@ elif isinstance(raw, list):
 else:
     data = []
 
-# Infra/async services to prune from the synchronous graph.
-# Kafka/queues are treated as transparent: we drop those nodes but connect their
-# producers and consumers directly via the bridging logic below.
-graph_mode = os.getenv("DEPS_GRAPH_MODE", "all-block").strip().lower()
-if graph_mode not in {"all-block", "async"}:
-    graph_mode = "all-block"
-
-SKIP_BASE = {
+# Infra services to prune from the synchronous graph.
+SKIP = {
     "frontend-proxy", "jaeger", "grafana", "otel-collector", "zipkin",
     "prometheus", "loadgenerator", "load-generator"
 }
-SKIP = set(SKIP_BASE)
-if graph_mode != "async":
-    SKIP |= {"kafka", "kafka-server"}
 
 def norm(s: str) -> str:
     s = str(s).strip().lower().replace("_", "-")
@@ -39,31 +30,12 @@ def norm(s: str) -> str:
             s = s[: -len(suf)]
     return s
 
-def load_name_set(path):
-    out = set()
-    if not path:
-        return out
-    try:
-        with open(path) as fh:
-            for line in fh:
-                line=line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                out.add(norm(line))
-    except FileNotFoundError:
-        return set()
-    return out
-
 entry = [
     norm(x)
     for x in open(a.entrypoints)
     if x.strip() and not x.startswith("#")
 ]
 ENTRY_ALLOW = set(entry)
-
-forced_targets = set()
-if graph_mode == "async":
-    forced_targets = load_name_set(os.getenv("ASYNC_TARGETS_FILE") or os.getenv("TARGET_FILE"))
 
 edges = []
 nodes = set()
@@ -79,18 +51,6 @@ for item in data:
     edges.append((pu, pv))
     nodes.add(pu); nodes.add(pv)
 
-if graph_mode == "async" and forced_targets:
-    producer = "checkout"
-    kafka_name = "kafka"
-    nodes.add(kafka_name)
-    for tgt in forced_targets:
-        nodes.add(tgt)
-    # ensure edges from producer -> kafka and kafka -> targets
-    if producer in nodes:
-        edges.append((producer, kafka_name))
-    for tgt in forced_targets:
-        if tgt in nodes:
-            edges.append((kafka_name, tgt))
 
 # Determine which nodes should be treated as transparent (skip) while keeping
 # entrypoints even if their normalized names match SKIP entries.
@@ -160,12 +120,18 @@ V = sorted({u for u, v in filtered} | {v for u, v in filtered})
 idx = {v: i for i, v in enumerate(V)}
 
 # unique directed edges on normalized ids
-E = sorted({(idx[u], idx[v]) for u, v in filtered})
+edge_set = {(idx[u], idx[v]) for u, v in filtered}
+E = sorted(edge_set)
+
+kafka_idx = idx.get("kafka")
+async_edges = []
+if kafka_idx is not None:
+    async_edges = [[u, v] for (u, v) in E if u == kafka_idx or v == kafka_idx]
 
 # entrypoints → ids (ignore missing ones gracefully)
 entry_ids = [idx[e] for e in entry if e in idx]
 
-graph = {"services": V, "edges": E, "entrypoints": entry_ids}
+graph = {"services": V, "edges": E, "entrypoints": entry_ids, "async_edges": async_edges}
 json.dump(graph, open(a.out, "w"))
 print(f"Wrote {a.out}: |V|={len(V)} |E|={len(E)} entries={len(entry_ids)}")
 if len(E) == 0:
