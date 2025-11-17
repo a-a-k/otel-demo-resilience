@@ -210,8 +210,5 @@ def main():
     print(json.dumps(summary))
 
 
--if __name__ == "__main__":
--    main()
-+if __name__ == "__main__":
-+    import random  # ensure bootstrap uses deterministic Random when seeded
-+    main()
+if __name__ == "__main__":
+    main()

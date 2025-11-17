@@ -139,7 +139,8 @@ jobs:
 
       - name: Ensure trace traffic before dependency build
         run: |
-          python3 scripts/warmup.py --locust "http://localhost:${ENVOY_PORT}/loadgen" --timeout 300
+          python3 scripts/warmup.py --locust "http://localhost:${ENVOY_PORT}/loadgen" --timeout 300 || \
+            echo "warmup retry before deps failed; continuing with manual burst"
 
       - name: Manual traffic burst (ensure traces)
         run: |
