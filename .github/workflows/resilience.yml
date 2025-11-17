@@ -13,7 +13,6 @@ jobs:
       fail-fast: false
       max-parallel: 20
       matrix:
-        mode: [ "all-block", "async" ]
         p_fail: [ "0.1", "0.3", "0.5", "0.7", "0.9" ]
         chunk: [ "1", "2"] #, "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25" ]
 
@@ -25,7 +24,6 @@ jobs:
       CHAOS_MEASURE_DELAY_SECONDS: "15"
       CHAOS_MEASURE_WINDOW_SECONDS: "40"
       LATENCY_P95_THRESHOLD_MS: "1500"
-      MODE: ${{ matrix.mode }}
       WINDOWS: "10"
       SAMPLES: "120000"
       OTEL_DEMO_REF: "main"
@@ -44,7 +42,6 @@ jobs:
       LOCUST_USERS: "150"
       LOCUST_SPAWN_RATE: "30"
       ALLOWLIST_FILE: 'config/services_allowlist.txt'
-      TARGET_FILE: ${{ matrix.mode == 'async' && 'config/async_targets.txt' || '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -155,37 +152,61 @@ jobs:
           head -c 800 graph.json || true
           # Non-empty graph check
           [ "$(jq '.edges|length' graph.json)" -gt 0 ]
+          GRAPH_SHA256=$(sha256sum graph.json | awk '{print $1}')
+          echo "GRAPH_SHA256=$GRAPH_SHA256"
+          echo "GRAPH_SHA256=$GRAPH_SHA256" >> "$GITHUB_ENV"
+          echo "$GRAPH_SHA256  graph.json" > graph.sha256
           
 
       - name: Measure replicas (actual Compose)
         run: bash scripts/read_replicas.sh > replicas.json
 
-      - name: Run Monte-Carlo estimator (R_model)
+      - name: Compute deterministic seeds
+        env:
+          P_FAIL: ${{ matrix.p_fail }}
+          CHUNK_ID: ${{ matrix.chunk }}
         run: |
-          MODE="${MODE}"
-          TARGET_ARGS=""
-          if [ -n "${TARGET_FILE}" ]; then
-            TARGET_ARGS="--targets ${TARGET_FILE}"
-          fi
-          python3 scripts/resilience.py \
-            --graph graph.json --replicas replicas.json \
-            --p "${{ matrix.p_fail }}" --samples "${SAMPLES}" \
-            --out "model_mode${MODE}_p${{ matrix.p_fail }}.json" $TARGET_ARGS
+          python3 - <<'PY'
+          import hashlib, os
+          p=os.environ["P_FAIL"]
+          chunk=os.environ["CHUNK_ID"]
+          def mk_seed(label):
+              data=f"{label}:{p}:{chunk}".encode()
+              return int(hashlib.sha256(data).hexdigest(), 16) % 2147483647
+          chaos_seed=mk_seed("chaos")
+          model_seed=mk_seed("model")
+          print(f"CHAOS_SEED={chaos_seed}")
+          print(f"MODEL_SEED={model_seed}")
+          with open(os.environ["GITHUB_ENV"],"a") as fh:
+              fh.write(f"CHAOS_SEED={chaos_seed}\n")
+              fh.write(f"MODEL_SEED={model_seed}\n")
+          PY
+
+      - name: Run Monte-Carlo estimator (R_model)
+        env:
+          P_FAIL: ${{ matrix.p_fail }}
+        run: |
+          for MODE in all-block async; do
+            echo "Running R_model mode=$MODE graph_sha=${GRAPH_SHA256:-unknown}"
+            python3 scripts/resilience.py \
+              --graph graph.json --replicas replicas.json \
+              --p "${P_FAIL}" --samples "${SAMPLES}" \
+              --mode "$MODE" \
+              --seed "${MODEL_SEED}" \
+              --out "model_mode${MODE}_p${P_FAIL}.json"
+          done
 
       - name: Chaos windows + R_live from Locust
         env:
           P_FAIL: ${{ matrix.p_fail }}
           CHUNK_ID: ${{ matrix.chunk }}
-          MODE_ID: ${{ matrix.mode }}
         run: |
           python3 -m pip install --quiet requests
-          CHUNK=${CHUNK_ID}
-          MODE="${MODE_ID}"
-          WINDOW_LOG="window_log_mode${MODE}_p${P_FAIL}_chunk${CHUNK}.jsonl"
-          : > "$WINDOW_LOG"
+          BASE_WINDOW_LOG="window_log_p${P_FAIL}_chunk${CHUNK_ID}.jsonl"
+          : > "$BASE_WINDOW_LOG"
           for i in $(seq 1 "${WINDOWS}"); do
-            echo "::group::window chunk=${CHUNK} idx=$i"
-            bash scripts/compose_chaos.sh "${P_FAIL}" "${ALLOWLIST_FILE}" "${CHAOS_WINDOW_SECONDS}" "$WINDOW_LOG" &
+            echo "::group::chunk=${CHUNK_ID} idx=$i"
+            bash scripts/compose_chaos.sh "${P_FAIL}" "${ALLOWLIST_FILE}" "${CHAOS_WINDOW_SECONDS}" "$BASE_WINDOW_LOG" &
             CHAOS_PID=$!
             sleep "${CHAOS_MEASURE_DELAY_SECONDS}"
             python3 scripts/collect_live.py \
@@ -195,65 +216,77 @@ jobs:
               --probe-frontend "http://localhost:${ENVOY_PORT}" \
               --probe-attempts 10 \
               --probe-checkout \
-              --window-log "$WINDOW_LOG" \
-              --out "live_mode${MODE}_p${P_FAIL}_chunk${CHUNK}_${i}.json"
+              --window-log "$BASE_WINDOW_LOG" \
+              --out "live_p${P_FAIL}_chunk${CHUNK_ID}_${i}.json"
             wait $CHAOS_PID || true
             echo "::endgroup::"
+          done
+          for MODE in all-block async; do
+            cp "$BASE_WINDOW_LOG" "window_log_mode${MODE}_p${P_FAIL}_chunk${CHUNK_ID}.jsonl"
+            for f in live_p${P_FAIL}_chunk${CHUNK_ID}_*.json; do
+              [ -f "$f" ] || continue
+              suffix="${f#live_p${P_FAIL}_chunk${CHUNK_ID}_}"
+              cp "$f" "live_mode${MODE}_p${P_FAIL}_chunk${CHUNK_ID}_${suffix}"
+            done
           done
 
       - name: Summarize chunk
         env:
           P_FAIL: ${{ matrix.p_fail }}
           CHUNK_ID: ${{ matrix.chunk }}
-          MODE_ID: ${{ matrix.mode }}
         run: |
           python3 - << 'PY'
           import glob, json, os
           p=os.environ["P_FAIL"]
           chunk=os.environ["CHUNK_ID"]
-          mode=os.environ["MODE_ID"]
-          files=sorted(glob.glob(f"live_mode{mode}_p{p}_chunk{chunk}_*.json"))
-          vals=[json.load(open(f))["R_live"] for f in files]
-          summary={
-              "mode": mode,
-              "p_fail": float(p),
-              "p_fail_str": p,
-              "chunk": int(chunk),
-              "windows": len(vals),
-              "sum": sum(vals),
-              "sum_sq": sum(v*v for v in vals)
-          }
-          json.dump(summary, open(f"summary_mode{mode}_p{p}_chunk{chunk}.json","w"))
-          print(summary)
+          for mode in ("all-block", "async"):
+              files=sorted(glob.glob(f"live_mode{mode}_p{p}_chunk{chunk}_*.json"))
+              vals=[json.load(open(f))["R_live"] for f in files]
+              summary={
+                  "mode": mode,
+                  "p_fail": float(p),
+                  "p_fail_str": p,
+                  "chunk": int(chunk),
+                  "windows": len(vals),
+                  "sum": sum(vals),
+                  "sum_sq": sum(v*v for v in vals)
+              }
+              json.dump(summary, open(f"summary_mode{mode}_p{p}_chunk{chunk}.json","w"))
+              print(summary)
           PY
 
       - name: Print chunk summary
         env:
           P_FAIL: ${{ matrix.p_fail }}
           CHUNK_ID: ${{ matrix.chunk }}
-          MODE_ID: ${{ matrix.mode }}
         run: |
           python3 - << 'PY'
           import json, os
-          p=os.environ['P_FAIL']; chunk=os.environ['CHUNK_ID']; mode=os.environ['MODE_ID']
-          data=json.load(open(f"summary_mode{mode}_p{p}_chunk{chunk}.json"))
-          total=data['windows']
-          mean=(data['sum']/total) if total else 0.0
-          print(f"mode={mode} chunk={chunk} p={p} windows={total} mean={mean:.4f}")
+          p=os.environ['P_FAIL']; chunk=os.environ['CHUNK_ID']
+          for mode in ("all-block", "async"):
+              data=json.load(open(f"summary_mode{mode}_p{p}_chunk{chunk}.json"))
+              total=data['windows']
+              mean=(data['sum']/total) if total else 0.0
+              print(f"mode={mode} chunk={chunk} p={p} windows={total} mean={mean:.4f}")
           PY
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: results_${{ matrix.mode }}_${{ matrix.p_fail }}_${{ matrix.chunk }}
+          name: results_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}
           path: |
             deps.json
             graph.json
+            graph.sha256
             replicas.json
-            model_mode${{ matrix.mode }}_p${{ matrix.p_fail }}.json
-            live_mode${{ matrix.mode }}_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}_*.json
-            summary_mode${{ matrix.mode }}_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.json
-            window_log_mode${{ matrix.mode }}_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.jsonl
+            model_modeall-block_p${{ matrix.p_fail }}.json
+            model_modeasync_p${{ matrix.p_fail }}.json
+            live_modeall-block_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}_*.json
+            live_modeasync_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}_*.json
+            summary_modeall-block_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.json
+            summary_modeasync_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.json
+            window_log_modeall-block_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.jsonl
+            window_log_modeasync_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.jsonl
             validation_summary.json
             validation_live.json
             validation_window_log.jsonl

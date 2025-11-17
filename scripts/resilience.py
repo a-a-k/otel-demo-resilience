@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, argparse, random
+import json, argparse, random, os
 from collections import deque
 
 ap = argparse.ArgumentParser()
@@ -11,7 +11,19 @@ ap.add_argument("--out", required=True)
 ap.add_argument("--mode", choices=["all-block", "async"], default="all-block",
                 help="Failure semantics: block on all edges or treat async edges (kafka) as non-blocking.")
 ap.add_argument("--targets", help="Optional file with newline-separated service names treated as required sinks.")
+ap.add_argument("--seed", type=int, help="Optional PRNG seed for deterministic Monte Carlo draws.")
 a = ap.parse_args()
+
+seed = a.seed
+if seed is None:
+    env_seed = os.getenv("MODEL_SEED")
+    if env_seed not in (None, ""):
+        try:
+            seed = int(env_seed)
+        except ValueError:
+            seed = None
+if seed is not None:
+    random.seed(seed)
 
 G = json.load(open(a.graph))
 V = G["services"]; E = G["edges"]; entry = G["entrypoints"]
@@ -88,6 +100,17 @@ for _ in range(a.samples):
     succ += 1 if ok_any else 0
 
 R_model = succ / a.samples
+graph_hash = os.getenv("GRAPH_SHA256")
+result = {"R_model": R_model, "p_fail": a.p, "samples": a.samples}
+if seed is not None:
+    result["seed"] = seed
+if graph_hash:
+    result["graph_hash"] = graph_hash
 with open(a.out, "w") as f:
-    json.dump({"R_model": R_model, "p_fail": a.p, "samples": a.samples}, f)
-print(json.dumps({"R_model": R_model, "samples": a.samples}))
+    json.dump(result, f)
+summary = {"R_model": R_model, "samples": a.samples}
+if seed is not None:
+    summary["seed"] = seed
+if graph_hash:
+    summary["graph_hash"] = graph_hash
+print(json.dumps(summary))
