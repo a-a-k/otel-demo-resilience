@@ -24,8 +24,8 @@ jobs:
       CHAOS_MEASURE_DELAY_SECONDS: "15"
       CHAOS_MEASURE_WINDOW_SECONDS: "40"
       LATENCY_P95_THRESHOLD_MS: "1500"
-      WINDOWS: "10"
-      SAMPLES: "500000"
+      WINDOWS: "100"
+      SAMPLES: "5000000"
       OTEL_DEMO_REF: "main"
       TRACES_TIMEOUT: "600"
       VALIDATION_WINDOW_SECONDS: "60"
@@ -40,8 +40,8 @@ jobs:
       VALIDATION_MIN_PROBE_FAILURES: "1"
       HEALTH_CHECK_WINDOW_SECONDS: "10"
       HEALTH_CHECK_PROBE_ATTEMPTS: "10"
-      LOCUST_USERS: "1000"
-      LOCUST_SPAWN_RATE: "200"
+      LOCUST_USERS: "100"
+      LOCUST_SPAWN_RATE: "20"
       ALLOWLIST_FILE: 'config/services_allowlist.txt'
 
     steps:
@@ -180,7 +180,7 @@ jobs:
             python3 scripts/collect_live.py \
               --window "${CHAOS_MEASURE_WINDOW_SECONDS}" \
               --probe-frontend "http://localhost:${ENVOY_PORT}" \
-              --probe-attempts 300 \
+              --probe-attempts 500 \
               --probe-checkout \
               --window-log "$WINDOW_LOG" \
               --out "live_p${P_FAIL}_chunk${CHUNK_ID}_${i}.json"
