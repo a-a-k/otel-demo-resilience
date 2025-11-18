@@ -125,6 +125,25 @@ def fetch_edges(services, lookback_min=None, limit=1000):
                             u, v = ordered[i], ordered[i+1]
                             if u != v:
                                 edges[(u, v)] = edges.get((u, v), 0) + 1
+                # Messaging edges (kafka producers/consumers) inferred via span tags
+                for sp in spans:
+                    svcname = svc_by_span.get(sp.get("spanID"))
+                    if not svcname:
+                        continue
+                    tag_map = {}
+                    for tg in sp.get("tags", []):
+                        key = (tg.get("key") or "").strip().lower()
+                        if not key:
+                            continue
+                        tag_map[key] = tg.get("value")
+                    system = str(tag_map.get("messaging.system") or "").strip().lower()
+                    if system != "kafka":
+                        continue
+                    kind = str(tag_map.get("span.kind") or sp.get("kind") or "").strip().lower()
+                    if kind == "producer":
+                        edges[(svcname, "kafka")] = edges.get((svcname, "kafka"), 0) + 1
+                    elif kind == "consumer":
+                        edges[("kafka", svcname)] = edges.get(("kafka", svcname), 0) + 1
             break  # next service after first base that returned
     return [{"parent": a, "child": b, "callCount": n} for (a, b), n in edges.items()]
 
