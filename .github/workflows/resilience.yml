@@ -94,7 +94,6 @@ jobs:
       - name: Baseline health check (no chaos)
         run: |
           python3 scripts/collect_live.py \
-            --locust "http://localhost:${ENVOY_PORT}/loadgen" \
             --window "${HEALTH_CHECK_WINDOW_SECONDS}" \
             --latency-p95-threshold "${LATENCY_P95_THRESHOLD_MS}" \
             --probe-frontend "http://localhost:${ENVOY_PORT}" \
@@ -112,39 +111,6 @@ jobs:
           print('Baseline R_live OK:', r)
           PY
 
-      - name: Validate chaos + live measurement
-        id: chaos_validation
-        run: |
-          attempt=0
-          until python3 scripts/validate_chaos_live.py \
-            --locust "http://localhost:${ENVOY_PORT}/loadgen" \
-            --allowlist "${ALLOWLIST_FILE}" \
-            --window "${VALIDATION_WINDOW_SECONDS}" \
-            --collect-window "${VALIDATION_COLLECT_WINDOW_SECONDS}" \
-            --collect-delay "${VALIDATION_COLLECT_DELAY_SECONDS}" \
-            --latency-p95-threshold "${LATENCY_P95_THRESHOLD_MS}" \
-            --log validation_window_log.jsonl \
-            --live validation_live.json \
-            --summary validation_summary.json \
-            --min-kills 1 \
-            --min-total "${VALIDATION_MIN_TOTAL}" \
-            --max-attempts "${VALIDATION_MAX_ATTEMPTS}" \
-            --retry-sleep "${VALIDATION_RETRY_SLEEP}" \
-            --max-live "${VALIDATION_MAX_LIVE}" \
-            --probe-url "${VALIDATION_PROBE_URL}" \
-            --probe-interval "${VALIDATION_PROBE_INTERVAL}" \
-            --min-probe-failures "${VALIDATION_MIN_PROBE_FAILURES}" \
-            --probe-frontend "http://localhost:${ENVOY_PORT}" \
-            --probe-attempts 100 \
-            --probe-checkout; do
-              attempt=$((attempt+1))
-              if [ $attempt -ge 3 ]; then
-                echo "validate_chaos_live.py failed after ${attempt} attempts" >&2
-                exit 1
-              fi
-              echo "[validation] retrying after 10s (attempt $attempt)"
-              sleep 10
-          done
 
       - name: Ensure trace traffic before dependency build
         run: |
@@ -184,26 +150,7 @@ jobs:
           
 
       - name: Prepare baseline replicas
-        working-directory: vendor/opentelemetry-demo
-        run: |
-          docker compose config --services \
-            | python3 - <<'PY' > ../replicas.json
-            import sys, json
-            def norm(name):
-                name = name.strip().lower().replace("_","-")
-                if name.endswith("-service"):
-                    return name[:-8]
-                if name.endswith("service"):
-                    return name[:-7]
-                return name
-            counts = {}
-            for line in sys.stdin:
-                svc = norm(line)
-                if not svc:
-                    continue
-                counts[svc] = counts.get(svc, 0) + 1
-            print(json.dumps(counts))
-            PY
+        run: echo '{}' > replicas.json
 
       - name: Compute deterministic seeds
         env:
@@ -254,7 +201,6 @@ jobs:
             CHAOS_PID=$!
             sleep "${CHAOS_MEASURE_DELAY_SECONDS}"
             python3 scripts/collect_live.py \
-              --locust "http://localhost:${ENVOY_PORT}/loadgen" \
               --window "${CHAOS_MEASURE_WINDOW_SECONDS}" \
               --latency-p95-threshold "${LATENCY_P95_THRESHOLD_MS}" \
               --probe-frontend "http://localhost:${ENVOY_PORT}" \

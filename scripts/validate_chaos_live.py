@@ -34,7 +34,6 @@ def read_json_lines(path: Path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--locust", required=True)
     ap.add_argument("--allowlist", required=True)
     ap.add_argument("--window", type=int, default=30)
     ap.add_argument("--p-fail", type=float, default=1.0)
@@ -47,8 +46,8 @@ def main():
                     help="Seconds to wait after chaos starts before capturing Locust stats.")
     ap.add_argument("--collect-window", type=int,
                     help="Window duration passed to collect_live.py (defaults to --window).")
-    ap.add_argument("--min-total", type=int, default=200,
-                    help="Minimum Locust total requests required for a valid attempt.")
+    ap.add_argument("--min-total", type=int, default=0,
+                    help="(Deprecated) Locust requirement no longer used; kept for CLI compatibility.")
     ap.add_argument("--max-attempts", type=int, default=3,
                     help="Retry chaos+measurement if traffic stays below min-total.")
     ap.add_argument("--retry-sleep", type=int, default=5,
@@ -107,8 +106,6 @@ def main():
         collect_cmd = [
             "python3",
             "scripts/collect_live.py",
-            "--locust",
-            args.locust,
             "--window",
             str(collect_window),
             "--latency-p95-threshold",
@@ -192,10 +189,11 @@ def main():
         killed = summary["killed"]
         eligible = summary["eligible"]
         detail = summary.get("detail") or {}
-        total = int(detail.get("total") or 0)
+        collect_probe_fail = int(detail.get("probe_fail") or 0)
+        extra_probe_fail = summary.get("probe_fail", 0)
+        total_probe_fail = collect_probe_fail + extra_probe_fail
         r_live = summary["R_live"]
-        probe_fail = summary.get("probe_fail", 0)
-        probe_ok = (args.min_probe_failures <= 0) or (probe_fail >= args.min_probe_failures)
+        probe_ok = (args.min_probe_failures <= 0) or (total_probe_fail >= args.min_probe_failures)
 
         if eligible <= 0:
             print("Validation failed: no eligible services detected for chaos", file=sys.stderr)
@@ -206,20 +204,6 @@ def main():
                 file=sys.stderr,
             )
             return 1
-        if total < args.min_total and not probe_ok:
-            if attempt >= args.max_attempts:
-                print(
-                    f"Validation failed: Locust total {total} < min_total {args.min_total} after {attempt} attempts",
-                    file=sys.stderr,
-                )
-                final_summary = summary
-                break
-            print(
-                f"[validation] attempt {attempt}: total={total} < min_total={args.min_total}, retrying...",
-                file=sys.stderr,
-            )
-            time.sleep(max(0, args.retry_sleep))
-            continue
         if r_live > args.max_live and not probe_ok:
             if attempt >= args.max_attempts:
                 print(
@@ -246,13 +230,12 @@ def main():
     print(json.dumps(final_summary))
 
     detail = final_summary.get("detail") or {}
-    total = int(detail.get("total") or 0)
-    probe_fail = final_summary.get("probe_fail", 0)
-    probe_ok = (args.min_probe_failures <= 0) or (probe_fail >= args.min_probe_failures)
+    collect_probe_fail = int(detail.get("probe_fail") or 0)
+    extra_probe_fail = final_summary.get("probe_fail", 0)
+    total_probe_fail = collect_probe_fail + extra_probe_fail
+    probe_ok = (args.min_probe_failures <= 0) or (total_probe_fail >= args.min_probe_failures)
     if final_summary["killed"] < args.min_kills or final_summary["eligible"] <= 0:
         return 1
-    if (total < args.min_total) and not probe_ok:
-        return 2
     if (final_summary["R_live"] > args.max_live) and not probe_ok:
         return 2
     return 0
