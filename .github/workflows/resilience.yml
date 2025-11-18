@@ -95,7 +95,6 @@ jobs:
         run: |
           python3 scripts/collect_live.py \
             --window "${HEALTH_CHECK_WINDOW_SECONDS}" \
-            --latency-p95-threshold "${LATENCY_P95_THRESHOLD_MS}" \
             --probe-frontend "http://localhost:${ENVOY_PORT}" \
             --probe-attempts "${HEALTH_CHECK_PROBE_ATTEMPTS}" \
             --window-log "" \
@@ -202,7 +201,6 @@ jobs:
             sleep "${CHAOS_MEASURE_DELAY_SECONDS}"
             python3 scripts/collect_live.py \
               --window "${CHAOS_MEASURE_WINDOW_SECONDS}" \
-              --latency-p95-threshold "${LATENCY_P95_THRESHOLD_MS}" \
               --probe-frontend "http://localhost:${ENVOY_PORT}" \
               --probe-attempts 10 \
               --probe-checkout \
