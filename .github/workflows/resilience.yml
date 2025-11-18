@@ -234,7 +234,6 @@ jobs:
             --p-fail "${P_FAIL}" \
             --chunk "${CHUNK_ID}" \
             --live-pattern "live_p${P_FAIL}_chunk${CHUNK_ID}_*.json" \
-            --window-log "window_log_p${P_FAIL}_chunk${CHUNK_ID}.jsonl" \
             --rows-out "reports/rows_p${P_FAIL}_chunk${CHUNK_ID}.csv" \
             --overall-out "reports/overall_p${P_FAIL}_chunk${CHUNK_ID}.json"
 
