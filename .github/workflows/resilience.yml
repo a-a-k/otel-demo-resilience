@@ -180,7 +180,7 @@ jobs:
             python3 scripts/collect_live.py \
               --window "${CHAOS_MEASURE_WINDOW_SECONDS}" \
               --probe-frontend "http://localhost:${ENVOY_PORT}" \
-              --probe-attempts 30 \
+              --probe-attempts 100 \
               --probe-checkout \
               --window-log "$WINDOW_LOG" \
               --out "live_p${P_FAIL}_chunk${CHUNK_ID}_${i}.json"
