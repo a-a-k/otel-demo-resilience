@@ -25,7 +25,7 @@ def _csv(url, timeout=6):
         pass
     return None
 
-def discover_base(base, attempts=5, sleep_s=2):
+def discover_base(base, attempts=10, sleep_s=4):
     base = base.rstrip("/")
     for _ in range(max(1, attempts)):
         # Try JSON first

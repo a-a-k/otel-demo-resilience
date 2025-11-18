@@ -115,7 +115,8 @@ jobs:
       - name: Validate chaos + live measurement
         id: chaos_validation
         run: |
-          python3 scripts/validate_chaos_live.py \
+          attempt=0
+          until python3 scripts/validate_chaos_live.py \
             --locust "http://localhost:${ENVOY_PORT}/loadgen" \
             --allowlist "${ALLOWLIST_FILE}" \
             --window "${VALIDATION_WINDOW_SECONDS}" \
@@ -135,7 +136,15 @@ jobs:
             --min-probe-failures "${VALIDATION_MIN_PROBE_FAILURES}" \
             --probe-frontend "http://localhost:${ENVOY_PORT}" \
             --probe-attempts 100 \
-            --probe-checkout
+            --probe-checkout; do
+              attempt=$((attempt+1))
+              if [ $attempt -ge 3 ]; then
+                echo "validate_chaos_live.py failed after ${attempt} attempts" >&2
+                exit 1
+              fi
+              echo "[validation] retrying after 10s (attempt $attempt)"
+              sleep 10
+          done
 
       - name: Ensure trace traffic before dependency build
         run: |
@@ -174,8 +183,27 @@ jobs:
           echo "$GRAPH_SHA256  graph.json" > graph.sha256
           
 
-      - name: Measure replicas (actual Compose)
-        run: bash scripts/read_replicas.sh > replicas.json
+      - name: Prepare baseline replicas
+        working-directory: vendor/opentelemetry-demo
+        run: |
+          docker compose config --services \
+            | python3 - <<'PY' > ../replicas.json
+import sys, json
+def norm(name):
+    name = name.strip().lower().replace("_","-")
+    if name.endswith("-service"):
+        return name[:-8]
+    if name.endswith("service"):
+        return name[:-7]
+    return name
+counts = {}
+for line in sys.stdin:
+    svc = norm(line)
+    if not svc:
+        continue
+    counts[svc] = counts.get(svc, 0) + 1
+print(json.dumps(counts))
+PY
 
       - name: Compute deterministic seeds
         env:
