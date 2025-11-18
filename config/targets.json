@@ -9,7 +9,7 @@
   },
   "GET /api/cart": {
     "entry": "frontend",
-    "all_of": ["cart", "redis-cart"]
+    "all_of": ["cart"]
   },
   "POST /api/checkout": {
     "entry": "frontend",
