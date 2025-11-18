@@ -31,10 +31,19 @@ def frontend_probe(base_url, attempts=2, timeout=6, enable_checkout=True):
     ok = 0
     detail = []
     endpoints = PROBE_ENDPOINTS + ([PROBE_CHECKOUT_ENDPOINT] if enable_checkout else [])
+    label_map = {}
+    per_endpoint = {}
+    for endpoint in endpoints:
+        method = "POST" if endpoint == PROBE_CHECKOUT_ENDPOINT else "GET"
+        label = f"{method} {endpoint}"
+        label_map[endpoint] = label
+        per_endpoint[label] = {"ok": 0, "total": 0}
     if not endpoints:
-        return 0, 0, detail
+        return 0, 0, detail, {}
     for _ in range(max(1, attempts)):
         endpoint = random.choice(endpoints)
+        label = label_map[endpoint]
+        per_endpoint[label]["total"] += 1
         url = f"{base}{endpoint}"
         try:
             method = "GET"
@@ -55,6 +64,7 @@ def frontend_probe(base_url, attempts=2, timeout=6, enable_checkout=True):
             elif resp.status_code in (401, 403):
                 detail.append({"endpoint": url, "method": method, "status": "skip", "code": resp.status_code})
                 ok += 1
+                per_endpoint[label]["ok"] += 1
                 continue
             else:
                 resp.raise_for_status()
@@ -70,10 +80,11 @@ def frontend_probe(base_url, attempts=2, timeout=6, enable_checkout=True):
             elif not data:
                 raise RuntimeError("empty response")
             ok += 1
+            per_endpoint[label]["ok"] += 1
             detail.append({"endpoint": url, "method": method, "status": "ok"})
         except Exception as exc:
             detail.append({"endpoint": url, "method": method, "status": "fail", "error": str(exc)})
-    return ok, max(1, attempts), detail
+    return ok, max(1, attempts), detail, per_endpoint
 
 
 def read_window_log(path):
@@ -108,7 +119,7 @@ def main():
     # Align measurement with chaos window
     time.sleep(max(1, a.window))
 
-    ok_probe, total_probe, probe_detail = frontend_probe(
+    ok_probe, total_probe, probe_detail, per_endpoint = frontend_probe(
         a.probe_frontend,
         attempts=max(1, a.probe_attempts),
         enable_checkout=a.probe_checkout
@@ -134,7 +145,7 @@ def main():
             killed_services = last_log.get("services") or []
     detail["killed_services"] = killed_services
 
-    out = {"R_live": R_live, "detail": detail, "window_log": last_log}
+    out = {"R_live": R_live, "per_endpoint": per_endpoint, "detail": detail, "window_log": last_log}
     with open(a.out, "w") as f:
         json.dump(out, f)
     print(json.dumps(out))

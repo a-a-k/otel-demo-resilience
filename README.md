@@ -75,6 +75,43 @@ Locust is used only to keep telemetry warm; it does not feed into the live metri
 
 `R_live` relies entirely on HTTP probes. Each window executes `probe_attempts` requests (30 in CI), randomly alternating endpoints. The checkout scenario performs a full POST workflow (`cart → checkout`). `probe_detail` logs URL, method (`GET/POST`), status, and errors. `R_live = probe_ok / probe_total`, while `R_live_sd` and `N` describe the dispersion across windows. Without seeds, chaos kill sets and probes differ each run.
 
+## Per-endpoint targets & evaluation
+
+`config/targets.json` defines strict success criteria per HTTP endpoint. Each entry must use exactly one rule (`any_of`, `all_of`, or `k_of_n`) and may optionally pin the entry service and mark asynchronous dependencies as skippable in async mode:
+
+```json
+{
+  "GET /api/products": {
+    "entry": "frontend",
+    "any_of": ["product-catalog"]
+  },
+  "POST /api/checkout": {
+    "entry": "frontend",
+    "all_of": ["checkout", "accounting", "fraud-detection"],
+    "exclude_async": true
+  }
+}
+```
+
+- `any_of` / `all_of` take a list of normalized service names.
+- `k_of_n` uses `{ "k": <int>, "items": [...] }`.
+- `exclude_async: true` ensures Kafka-derived edges do not block the endpoint when `--mode async`.
+
+`scripts/resilience.py` understands two new CLI flags:
+
+- `--targets-file config/targets.json` loads endpoint specs.
+- `--endpoint "GET /api/products"` runs Monte Carlo strictly for that endpoint.
+
+When `--endpoint` is set, the script writes `model_{mode}_e{endpoint}_p{p}_chunk{chunk}.json` and includes the endpoint label in the payload. The CI workflow iterates over every endpoint in `targets.json`, so artifacts are emitted for both `all-block` and `async` semantics.
+
+`scripts/collect_live.py` now records per-endpoint success counts (keys match `targets.json`) in each `live_p*_chunk*_*.json` window. `scripts/summarize_results.py --targets-file config/targets.json` correlates live windows with matching model artifacts and generates:
+
+- `reports/rows_p{p}_chunk{chunk}_e{endpoint}.csv` — one row per window with live rate, per-mode bias, and delta.
+- `reports/overall_p{p}_chunk{chunk}_e{endpoint}.json` — Wilcoxon, bootstrap CI (median delta), window count, and the two model estimates.
+- `reports/rows_p{p}_chunk{chunk}_mix.csv` + `reports/overall_p{p}_chunk{chunk}_mix.json` — weighted mixes where each window’s contribution is weighted by the number of probes hitting that endpoint.
+
+The “Quick report” step in CI reads these CSVs/JSONs and prints a compact table per endpoint (plus the mix) with mean bias for both modes, delta (`async - all`), sample count, and Wilcoxon p-value. Negative delta means the async model is closer to the live metric for that endpoint.
+
 ## Notes
 
 - Kafka edges are reconstructed from real traces: `scripts/traces_to_deps.py` looks for spans with `messaging.system=kafka` and `span.kind=producer/consumer` so that `checkout→kafka` and `kafka→consumers` appear even without parentSpanId.

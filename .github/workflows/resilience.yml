@@ -40,8 +40,8 @@ jobs:
       VALIDATION_MIN_PROBE_FAILURES: "1"
       HEALTH_CHECK_WINDOW_SECONDS: "10"
       HEALTH_CHECK_PROBE_ATTEMPTS: "10"
-      LOCUST_USERS: "100"
-      LOCUST_SPAWN_RATE: "20"
+      LOCUST_USERS: "200"
+      LOCUST_SPAWN_RATE: "50"
       ALLOWLIST_FILE: 'config/services_allowlist.txt'
 
     steps:
@@ -75,6 +75,9 @@ jobs:
           check("chaos", "CHAOS_WINDOW_SECONDS", "CHAOS_MEASURE_DELAY_SECONDS", "CHAOS_MEASURE_WINDOW_SECONDS")
           check("validation", "VALIDATION_WINDOW_SECONDS", "VALIDATION_COLLECT_DELAY_SECONDS", "VALIDATION_COLLECT_WINDOW_SECONDS")
           PY
+
+      - name: Run target evaluation tests
+        run: python3 scripts/tests_targets.py
 
       - name: Fetch opentelemetry-demo
         run: bash vendor/fetch-otel-demo.sh "$OTEL_DEMO_REF"
@@ -164,6 +167,55 @@ jobs:
               --out "model_mode${MODE}_p${P_FAIL}.json"
           done
 
+      - name: Run per-endpoint Monte-Carlo estimators
+        env:
+          P_FAIL: ${{ matrix.p_fail }}
+          CHUNK_ID: ${{ matrix.chunk }}
+          SAMPLES: ${{ env.SAMPLES }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+
+          p = os.environ["P_FAIL"]
+          chunk = os.environ["CHUNK_ID"]
+          samples = os.environ.get("SAMPLES", "120000")
+
+          def safe(label: str) -> str:
+              out = label.strip().replace("/", "_").replace(" ", "_")
+              cleaned = "_".join(seg for seg in out.split("_") if seg)
+              cleaned = cleaned.lower()
+              return cleaned or "endpoint"
+
+          targets = json.load(open("config/targets.json"))
+          modes = ["all-block", "async"]
+          for endpoint in targets:
+              label = safe(endpoint)
+              for mode in modes:
+                  outfile = f"model_mode{mode}_e{label}_p{p}_chunk{chunk}.json"
+                  cmd = [
+                      "python3",
+                      "scripts/resilience.py",
+                      "--graph",
+                      "graph.json",
+                      "--replicas",
+                      "replicas.json",
+                      "--p",
+                      p,
+                      "--samples",
+                      samples,
+                      "--mode",
+                      mode,
+                      "--targets-file",
+                      "config/targets.json",
+                      "--endpoint",
+                      endpoint,
+                      "--out",
+                      outfile,
+                  ]
+                  print(" ".join(cmd))
+                  subprocess.run(cmd, check=True)
+          PY
+
       - name: Chaos windows + R_live from Locust
         env:
           P_FAIL: ${{ matrix.p_fail }}
@@ -180,7 +232,7 @@ jobs:
             python3 scripts/collect_live.py \
               --window "${CHAOS_MEASURE_WINDOW_SECONDS}" \
               --probe-frontend "http://localhost:${ENVOY_PORT}" \
-              --probe-attempts 500 \
+              --probe-attempts 300 \
               --probe-checkout \
               --window-log "$WINDOW_LOG" \
               --out "live_p${P_FAIL}_chunk${CHUNK_ID}_${i}.json"
@@ -235,7 +287,8 @@ jobs:
             --chunk "${CHUNK_ID}" \
             --live-pattern "live_p${P_FAIL}_chunk${CHUNK_ID}_*.json" \
             --rows-out "reports/rows_p${P_FAIL}_chunk${CHUNK_ID}.csv" \
-            --overall-out "reports/overall_p${P_FAIL}_chunk${CHUNK_ID}.json"
+            --overall-out "reports/overall_p${P_FAIL}_chunk${CHUNK_ID}.json" \
+            --targets-file config/targets.json
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -248,11 +301,17 @@ jobs:
             replicas.json
             model_modeall-block_p${{ matrix.p_fail }}.json
             model_modeasync_p${{ matrix.p_fail }}.json
+            model_modeall-block_e*_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.json
+            model_modeasync_e*_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.json
             live_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}_*.json
             summary_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.json
             window_log_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.jsonl
             reports/rows_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.csv
             reports/overall_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}.json
+            reports/rows_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}_e*.csv
+            reports/overall_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}_e*.json
+            reports/rows_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}_mix.csv
+            reports/overall_p${{ matrix.p_fail }}_chunk${{ matrix.chunk }}_mix.json
             validation_summary.json
             validation_live.json
             validation_window_log.jsonl
@@ -275,7 +334,8 @@ jobs:
       - name: Print quick report and enforce monotonicity
         run: |
           python3 - << 'PY'
-          import glob, json, sys, math
+          import glob, json, sys, math, csv
+          from collections import defaultdict
 
           def load_json_relaxed(path):
               with open(path, "r", encoding="utf-8") as fh:
@@ -312,6 +372,40 @@ jobs:
               entry['sum_sq'] += s['sum_sq']
               entry['n'] += s['windows']
               p_labels[p] = p_str
+
+          def wilcoxon_signed_rank(x, y):
+              diffs = [a - b for a, b in zip(x, y) if a != b]
+              diffs = [d for d in diffs if d != 0]
+              n = len(diffs)
+              if n == 0:
+                  return None
+              abs_with_idx = sorted((abs(d), idx) for idx, d in enumerate(diffs))
+              ranks = [0.0] * n
+              tie_counts = []
+              i = 0
+              while i < n:
+                  j = i
+                  while j < n and abs_with_idx[j][0] == abs_with_idx[i][0]:
+                      j += 1
+                  rank = (i + 1 + j) / 2
+                  for k in range(i, j):
+                      ranks[abs_with_idx[k][1]] = rank
+                  tie_len = j - i
+                  if tie_len > 1:
+                      tie_counts.append(tie_len)
+                  i = j
+              w_pos = sum(rank for rank, diff in zip(ranks, diffs) if diff > 0)
+              w_neg = sum(rank for rank, diff in zip(ranks, diffs) if diff < 0)
+              w = min(w_pos, w_neg)
+              mean = n * (n + 1) / 4
+              var = n * (n + 1) * (2 * n + 1) / 24
+              if tie_counts:
+                  tie_term = sum(t * (t * t - 1) for t in tie_counts) / 48
+                  var -= tie_term
+              if var <= 0:
+                  return None
+              z = (w - mean) / math.sqrt(var)
+              return math.erfc(abs(z) / math.sqrt(2))
           def model_value(mode, p_label):
               paths = glob.glob(f"**/model_mode{mode}_p{p_label}.json", recursive=True)
               if not paths:
@@ -369,4 +463,49 @@ jobs:
               sys.exit(1)
           if not ok_live:
               print('Warning: R_live_mean not non-increasing with p_fail (informational only)', file=sys.stderr)
+
+          def load_rows(paths):
+              rows = []
+              for path in paths:
+                  with open(path, "r", encoding="utf-8") as fh:
+                      reader = csv.DictReader(fh)
+                      for row in reader:
+                          rows.append({
+                              'endpoint': row['endpoint'],
+                              'p_label': row['p_fail'],
+                              'p': float(row['p_fail']),
+                              'bias_all': float(row['bias_all_block']),
+                              'bias_async': float(row['bias_async']),
+                              'delta': float(row['delta_bias']),
+                              'weight': float(row.get('weight', 1.0)),
+                          })
+              return rows
+
+          endpoint_rows = load_rows(glob.glob('**/reports/rows_p*_chunk*_e*.csv', recursive=True))
+          mix_rows = load_rows(glob.glob('**/reports/rows_p*_chunk*_mix.csv', recursive=True))
+          combined_rows = endpoint_rows + mix_rows
+          if combined_rows:
+              grouped = defaultdict(lambda: {'bias_all':0.0,'bias_async':0.0,'delta':0.0,'weight':0.0,'bias_all_list':[],'bias_async_list':[],'count':0,'p_label':None})
+              for row in combined_rows:
+                  key = (row['endpoint'], row['p'])
+                  entry = grouped[key]
+                  entry['bias_all'] += row['bias_all'] * row['weight']
+                  entry['bias_async'] += row['bias_async'] * row['weight']
+                  entry['delta'] += row['delta'] * row['weight']
+                  entry['weight'] += row['weight']
+                  entry['bias_all_list'].append(row['bias_all'])
+                  entry['bias_async_list'].append(row['bias_async'])
+                  entry['count'] += 1
+                  entry['p_label'] = row['p_label']
+              print("\nendpoint\tp\tbias_all\tbias_async\tdelta(async-all)\tN_windows\tp_wilcoxon")
+              for (endpoint, p_val) in sorted(grouped.keys(), key=lambda x: (x[0], x[1])):
+                  entry = grouped[(endpoint, p_val)]
+                  weight = entry['weight'] or entry['count'] or 1.0
+                  mean_all = entry['bias_all']/weight
+                  mean_async = entry['bias_async']/weight
+                  delta_mean = entry['delta']/weight
+                  wilcoxon_p = wilcoxon_signed_rank(entry['bias_all_list'], entry['bias_async_list'])
+                  print(f"{endpoint}\t{entry['p_label']}\t{mean_all:.4f}\t{mean_async:.4f}\t{delta_mean:.4f}\t{entry['count']}\t{wilcoxon_p if wilcoxon_p is not None else 'na'}")
+
+          PY
           PY
