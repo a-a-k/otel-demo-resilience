@@ -180,7 +180,7 @@ jobs:
             python3 scripts/collect_live.py \
               --window "${CHAOS_MEASURE_WINDOW_SECONDS}" \
               --probe-frontend "http://localhost:${ENVOY_PORT}" \
-              --probe-attempts 10 \
+              --probe-attempts 30 \
               --probe-checkout \
               --window-log "$WINDOW_LOG" \
               --out "live_p${P_FAIL}_chunk${CHUNK_ID}_${i}.json"
@@ -318,7 +318,7 @@ jobs:
                   print(f"Missing model file for mode={mode} p={p_label}", file=sys.stderr)
                   sys.exit(1)
               return load_json_relaxed(paths[0])['R_model']
-          rows = []
+          combined = []
           for p, data in live_agg.items():
               p_label = p_labels[p]
               n = data['n']
@@ -329,27 +329,41 @@ jobs:
                   mean = data['sum']/n
                   variance = max(0.0, data['sum_sq']/n - mean*mean)
                   sd = math.sqrt(variance)
-              rm_block = model_value('all-block', p_label)
-              rm_async = model_value('async', p_label)
-              rows.append(('all-block', p, p_label, rm_block, mean, sd, n))
-              rows.append(('async', p, p_label, rm_async, mean, sd, n))
-          rl_series = sorted((p, (data['sum']/data['n']) if data['n'] else 0.0) for p, data in live_agg.items())
+              row = {
+                  'p': p,
+                  'p_label': p_label,
+                  'live_mean': mean,
+                  'live_sd': sd,
+                  'n': n,
+                  'model_all_block': model_value('all-block', p_label),
+                  'model_async': model_value('async', p_label)
+              }
+              combined.append(row)
+          combined.sort(key=lambda x: x['p'])
+          rl_series = [(row['p'], row['live_mean']) for row in combined]
           ok_live = True
           prev_rl = None
           for p, mean in rl_series:
               if prev_rl is not None and mean > prev_rl + 1e-9:
                   ok_live = False
               prev_rl = mean
-          rows.sort(key=lambda x: (x[0], x[1]))
-          print('mode\tp\tR_model\tR_live_mean\tR_live_sd\tN')
+          print('p\tR_model_all_block\tR_model_async\tR_live_mean\tR_live_sd\tN')
           ok_model = True
-          prev_rm = {}
-          for mode, p, p_label, rm, rl, sd, n in rows:
-              print(f"{mode}\t{p:.1f}\t{rm:.4f}\t{rl:.4f}\t{sd:.4f}\t{n}")
-              prev_rm.setdefault(mode, None)
-              if prev_rm[mode] is not None and rm > prev_rm[mode] + 1e-9:
+          prev_rm = {'all-block': None, 'async': None}
+          for row in combined:
+              p = row['p']
+              rm_block = row['model_all_block']
+              rm_async = row['model_async']
+              rl = row['live_mean']
+              sd = row['live_sd']
+              n = row['n']
+              print(f"{p:.1f}\t{rm_block:.4f}\t{rm_async:.4f}\t{rl:.4f}\t{sd:.4f}\t{n}")
+              if prev_rm['all-block'] is not None and rm_block > prev_rm['all-block'] + 1e-9:
                   ok_model = False
-              prev_rm[mode] = rm
+              if prev_rm['async'] is not None and rm_async > prev_rm['async'] + 1e-9:
+                  ok_model = False
+              prev_rm['all-block'] = rm_block
+              prev_rm['async'] = rm_async
           if not ok_model:
               print('Monotonicity check failed: R_model is not non-increasing with p_fail (per mode)', file=sys.stderr)
               sys.exit(1)
