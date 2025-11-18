@@ -51,16 +51,10 @@ TOTAL=${#CANDIDATES[@]}
 export TOTAL
 
 : > /tmp/killset.txt
-if [ "$TOTAL" -gt 0 ] && awk "BEGIN {exit !($P_FAIL > 0)}"; then
+if [ "$TOTAL" > 0 ] && awk "BEGIN {exit !($P_FAIL > 0)}"; then
   python3 - "$P_FAIL" "${CANDIDATES[@]}" > /tmp/killset.txt <<'PY'
-import sys, random, math, os
+import sys, random, math
 p = float(sys.argv[1])
-seed = os.environ.get("CHAOS_SEED")
-if seed not in (None, ""):
-    try:
-        random.seed(int(seed))
-    except ValueError:
-        pass
 candidates = [c for c in sys.argv[2:] if c]
 n = len(candidates)
 kill_n = 0
@@ -101,8 +95,7 @@ with open(log, "a") as fh:
       'eligible': int(os.environ.get('TOTAL','0')),
       'killed': len(names),
       'services': sorted(svcs),
-      'window_s': win,
-      'chaos_seed': os.environ.get('CHAOS_SEED')
+      'window_s': win
     }) + "\n")
 PY
 

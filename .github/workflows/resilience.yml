@@ -151,26 +151,9 @@ jobs:
       - name: Prepare baseline replicas
         run: echo '{}' > replicas.json
 
-      - name: Compute deterministic seeds
-        env:
-          P_FAIL: ${{ matrix.p_fail }}
-          CHUNK_ID: ${{ matrix.chunk }}
+      - name: Unset deterministic seeds
         run: |
-          python3 - <<'PY'
-          import hashlib, os
-          p=os.environ["P_FAIL"]
-          chunk=os.environ["CHUNK_ID"]
-          def mk_seed(label):
-              data=f"{label}:{p}:{chunk}".encode()
-              return int(hashlib.sha256(data).hexdigest(), 16) % 2147483647
-          chaos_seed=mk_seed("chaos")
-          model_seed=mk_seed("model")
-          print(f"CHAOS_SEED={chaos_seed}")
-          print(f"MODEL_SEED={model_seed}")
-          with open(os.environ["GITHUB_ENV"],"a") as fh:
-              fh.write(f"CHAOS_SEED={chaos_seed}\n")
-              fh.write(f"MODEL_SEED={model_seed}\n")
-          PY
+          echo "" > $GITHUB_ENV
 
       - name: Run Monte-Carlo estimator (R_model)
         env:

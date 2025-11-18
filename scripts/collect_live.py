@@ -37,6 +37,7 @@ def frontend_probe(base_url, attempts=2, timeout=6, enable_checkout=True):
         endpoint = random.choice(endpoints)
         url = f"{base}{endpoint}"
         try:
+            method = "GET"
             if endpoint == PROBE_CHECKOUT_ENDPOINT:
                 session = R.Session()
                 item = random.choice(PROBE_PRODUCTS)
@@ -46,12 +47,13 @@ def frontend_probe(base_url, attempts=2, timeout=6, enable_checkout=True):
                 payload["email"] = f"resilience+{random.randint(1,999999)}@example.com"
                 checkout_url = f"{url}?currencyCode=USD"
                 resp = session.post(checkout_url, json=payload, timeout=timeout)
+                method = "POST"
             else:
                 resp = R.get(url, timeout=timeout)
             if 200 <= resp.status_code < 300:
                 pass
             elif resp.status_code in (401, 403):
-                detail.append({"endpoint": url, "status": "skip", "code": resp.status_code})
+                detail.append({"endpoint": url, "method": method, "status": "skip", "code": resp.status_code})
                 ok += 1
                 continue
             else:
@@ -68,9 +70,9 @@ def frontend_probe(base_url, attempts=2, timeout=6, enable_checkout=True):
             elif not data:
                 raise RuntimeError("empty response")
             ok += 1
-            detail.append({"endpoint": url, "status": "ok"})
+            detail.append({"endpoint": url, "method": method, "status": "ok"})
         except Exception as exc:
-            detail.append({"endpoint": url, "status": "fail", "error": str(exc)})
+            detail.append({"endpoint": url, "method": method, "status": "fail", "error": str(exc)})
     return ok, max(1, attempts), detail
 
 

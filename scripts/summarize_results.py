@@ -25,24 +25,6 @@ def read_live_values(pattern: str) -> List[float]:
     return values
 
 
-def read_chaos_seed(path: str) -> Optional[str]:
-    if not os.path.exists(path):
-        return None
-    seed = None
-    with open(path, "r", encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if "chaos_seed" in rec:
-                seed = str(rec["chaos_seed"])
-    return seed
-
-
 def bootstrap_mean_ci(values: List[float], n_resamples: int = 10000,
                       alpha: float = 0.05, seed: Optional[int] = None):
     if not values:
@@ -118,7 +100,6 @@ def main():
     parser.add_argument("--rows-out", default="reports/rows.csv")
     parser.add_argument("--overall-out", default="reports/overall.json")
     parser.add_argument("--live-pattern", help="Glob for live R_live files; defaults to live_p{p}_chunk{chunk}_*.json")
-    parser.add_argument("--window-log", help="Path to window log JSONL for chaos seed lookup")
     args = parser.parse_args()
 
     p_fail = args.p_fail
@@ -134,9 +115,6 @@ def main():
     graph_hash = graph_hash_block or graph_hash_async
 
     model_seed = model_block.get("seed")
-    window_log_path = args.window_log or f"window_log_p{p_fail}_chunk{chunk}.jsonl"
-    chaos_seed = read_chaos_seed(window_log_path)
-
     live_pattern = args.live_pattern or f"live_p{p_fail}_chunk{chunk}_*.json"
     r_live_values = read_live_values(live_pattern)
     windows = len(r_live_values)
@@ -168,7 +146,7 @@ def main():
             "p_fail", "chunk", "graph_hash", "R_live_mean",
             "R_model_all_block", "R_model_async", "bias_block_mean",
             "bias_async_mean", "delta_bias_mean", "windows",
-            "model_seed", "chaos_seed"
+            "model_seed"
         ])
         writer.writerow([
             p_fail,
@@ -181,8 +159,7 @@ def main():
             bias_async_mean,
             delta_mean,
             windows,
-            model_seed if model_seed is not None else "",
-            chaos_seed if chaos_seed is not None else ""
+            model_seed if model_seed is not None else ""
         ])
 
     summary = {
@@ -201,7 +178,6 @@ def main():
         "model_seed": model_seed,
         "R_model_all_block": r_model_block,
         "R_model_async": r_model_async,
-        "chaos_seed": chaos_seed,
     }
 
     overall_dir = os.path.dirname(args.overall_out) or "."

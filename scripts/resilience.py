@@ -15,13 +15,6 @@ ap.add_argument("--seed", type=int, help="Optional PRNG seed for deterministic M
 a = ap.parse_args()
 
 seed = a.seed
-if seed is None:
-    env_seed = os.getenv("MODEL_SEED")
-    if env_seed not in (None, ""):
-        try:
-            seed = int(env_seed)
-        except ValueError:
-            seed = None
 if seed is not None:
     random.seed(seed)
 
