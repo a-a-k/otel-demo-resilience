@@ -1,40 +1,85 @@
 # otel-resilience-compose
 
-## Quick start (local)
+We study the resilience of the [OpenTelemetry Demo](https://github.com/open-telemetry/opentelemetry-demo) in Docker Compose, derive the dependency graph directly from traces, and compare two semantics for the model: “all edges are blocking” vs “Kafka edges are non-blocking”.
+
+---
+
+## Quick start
 ```bash
-# optional: run locally (not needed for CI)
+# 1. fetch OpenTelemetry Demo sources (if not yet downloaded)
 bash vendor/fetch-otel-demo.sh
+
+# 2. start the demo locally
 (cd vendor/opentelemetry-demo && docker compose up -d)
 bash scripts/wait_http.sh http://localhost:8080/ 120
 bash scripts/wait_http.sh http://localhost:8080/jaeger/ui 120
 bash scripts/wait_http.sh http://localhost:8080/loadgen/ 120
 
-# export deps and build graph
-bash scripts/export_deps.sh 30 > deps.json
-python3 scripts/deps_to_graph.py --deps deps.json --entrypoints config/entrypoints.txt --out graph.json
+# 3. export dependencies strictly from Jaeger traces
+python3 scripts/traces_to_deps.py --fail-on-empty > deps.json
 
-# read replicas & run estimator for p=0.3
-bash scripts/read_replicas.sh > replicas.json
-python3 scripts/resilience.py --graph graph.json --replicas replicas.json --p 0.3 --samples 120000 --out model.json
+# 4. build the graph (Kafka edges land in async_edges)
+python3 scripts/deps_to_graph.py \
+  --deps deps.json \
+  --entrypoints config/entrypoints.txt \
+  --out graph.json
+
+# 5. optional: declarative replicas – by default each service has one replica
+echo '{}' > replicas.json
+
+# 6. run the model, e.g., for p_fail=0.3
+python3 scripts/resilience.py \
+  --graph graph.json \
+  --replicas replicas.json \
+  --p 0.3 \
+  --samples 120000 \
+  --mode all-block \
+  --out model_all-block.json
+python3 scripts/resilience.py \
+  --graph graph.json \
+  --replicas replicas.json \
+  --p 0.3 \
+  --samples 120000 \
+  --mode async \
+  --out model_async.json
 ```
 
-## Push-and-forget
-Commit this repo to GitHub and push. The workflow `.github/workflows/resilience.yml` runs a matrix over:
-- `mode ∈ {norepl, repl}` (scales stateless services in `repl`)
-- `p_fail ∈ {0.1, 0.3, 0.5, 0.7, 0.9}`
+## CI / GitHub Actions
+The workflow `.github/workflows/resilience.yml` boots the demo and runs chaos experiments for the matrix:
 
-Artifacts per cell:
-- `model_<mode>_<p>.json` – Monte‑Carlo estimate.
-- `live_<mode>_<p>_N.json` – per-window live measurements from Locust.
-- `summary_<mode>_<p>.json` – aggregate (mean/sd).
+- `p_fail ∈ {0.1, 0.3, 0.5, 0.7, 0.9}`
+- `chunk ∈ {1,2}` (the same chaos level is executed twice for averaging)
+
+Within each job:
+1. Dependencies are collected **only from traces** (`scripts/traces_to_deps.py --fail-on-empty`). If Jaeger does not have traces, the job fails; there is no `/dependencies` fallback.
+2. `scripts/deps_to_graph.py` produces a single graph with an `async_edges` field (all edges touching Kafka). Topology is identical for both model semantics.
+3. `scripts/resilience.py` runs twice (all-block and async) on the same `graph.json`. No seeds are used — Monte Carlo relies on the natural PRNG.
+4. Chaos (`scripts/compose_chaos.sh`) executes 10 windows of 60 s. In each window we run 30 HTTP probes (`collect_live.py`) and compute `R_live = probe_ok / probe_total`. Probes target `/api/products`, `/api/recommendations`, `/api/cart`, and the full checkout flow (POST).
+5. `scripts/summarize_results.py` aggregates model and live data, and the final “Print quick report” step prints a table with columns `p`, `R_model_all_block`, `R_model_async`, `R_live_mean`, `R_live_sd`, `N`.
+
+Artifacts per matrix cell:
+
+- `model_modeall-block_p*.json`, `model_modeasync_p*.json` – model estimates.
+- `live_p*_chunk*_*.json` – individual live windows (only HTTP probes).
+- `summary_p*_chunk*.json` – aggregated windows (`sum`, `sum_sq`, `windows`).
+- `reports/rows_p*_chunk*.csv`, `reports/overall_p*_chunk*.json` – head-to-head statistics (delta bias, CI, Wilcoxon).
+- `window_log_p*_chunk*.jsonl` – chaos logs with killed services.
+
+Locust is used only to keep telemetry warm; it does not feed into the live metric.
+
+## Model: all-block vs async
+
+`scripts/resilience.py` builds a reachability graph from `graph.json`. For `mode=all-block`, all edges are used. For `mode=async`, edges listed in `async_edges` (i.e., `checkout→kafka`, `kafka→accounting`, `kafka→fraud-detection`) are removed so that the Kafka branch does not block checkout’s immediate success. Monte Carlo simulates `samples` failure scenarios based on per-service replicas (if `replicas.json` is `{}`, we assume 1 replica per service).
+
+## Live metric
+
+`R_live` relies entirely on HTTP probes. Each window executes `probe_attempts` requests (30 in CI), randomly alternating endpoints. The checkout scenario performs a full POST workflow (`cart → checkout`). `probe_detail` logs URL, method (`GET/POST`), status, and errors. `R_live = probe_ok / probe_total`, while `R_live_sd` and `N` describe the dispersion across windows. Without seeds, chaos kill sets and probes differ each run.
 
 ## Notes
-- We keep the demo Locust load so that traffic and telemetry stay warm, but `R_live` is now driven **exclusively by frontend probes** (`cart → checkout`). Each window runs 100 probes; `R_live = probe_ok / probe_total`, while Locust counters are preserved only for debugging. A baseline health check (without chaos) still guards the pipeline before any experiments run.  
-- Discovery prefers scraping **Jaeger traces** with `scripts/traces_to_deps.py`; if indexing is empty it automatically falls back to the `/jaeger/api/dependencies` endpoint.
-- `scripts/deps_to_graph.py` treats Kafka and other queues as transparent hops: an observed chain `checkout → kafka → fraud-detection` becomes a direct `checkout → fraud` edge so that the Monte Carlo model remains blocking even when the runtime uses async transports.
-- CI bumps Locust’s default load (`LOCUST_USERS=150`, `LOCUST_SPAWN_RATE=30`) and runs `scripts/validate_chaos_live.py` up front (60 s chaos window with a 15 s reveal delay, HTTP frontend probes, multiple retries until ≥80 requests **or** a failed probe while `R_live ≤ 0.99`) to prove that chaos actually kills containers; the results land in `validation_*.json`.
-- The primary chaos loop uses 60‑second windows, waits 15 s for the failure to surface, and only then captures a 40‑second window via `collect_live.py` so that metrics cover the outage period.
-- The GitHub Actions summary enforces monotonicity only for `R_model`; `R_live_mean` is informational and may fluctuate if the load misses a failure window.
-- Chaos is implemented as **random container stops** for a fixed window, then automatic restarts, matching a fail‑stop assumption.
 
-See `config/services_allowlist.txt` to decide which app services are eligible for kills; infra (proxy, collector, jaeger, grafana, db/brokers) is excluded by default.
+- Kafka edges are reconstructed from real traces: `scripts/traces_to_deps.py` looks for spans with `messaging.system=kafka` and `span.kind=producer/consumer` so that `checkout→kafka` and `kafka→consumers` appear even without parentSpanId.
+- `scripts/deps_to_graph.py` never alters the service list per mode: the single graph is reused for both all-block and async semantics.
+- Probe/window counts are driven by `PROBE_ATTEMPTS` and `WINDOWS` in the workflow. Larger values reduce noise in `R_live` but increase runtime.
+- Seeds have been removed entirely: chaos, Monte Carlo, and bootstrap (in `summarize_results.py` we use `random.Random()` without a fixed seed) produce different results on each run.
+
+You can run individual scripts locally (e.g., only `collect_live.py`) for debugging. No Locust API is required — everything uses standard HTTP.
