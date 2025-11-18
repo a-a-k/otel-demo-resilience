@@ -151,10 +151,6 @@ jobs:
       - name: Prepare baseline replicas
         run: echo '{}' > replicas.json
 
-      - name: Unset deterministic seeds
-        run: |
-          echo "" > $GITHUB_ENV
-
       - name: Run Monte-Carlo estimator (R_model)
         env:
           P_FAIL: ${{ matrix.p_fail }}
@@ -165,7 +161,6 @@ jobs:
               --graph graph.json --replicas replicas.json \
               --p "${P_FAIL}" --samples "${SAMPLES}" \
               --mode "$MODE" \
-              --seed "${MODEL_SEED}" \
               --out "model_mode${MODE}_p${P_FAIL}.json"
           done
 
