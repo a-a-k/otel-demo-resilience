@@ -337,14 +337,23 @@ def main() -> None:
         sinks = [i in targets_simple for i in range(len(services))]
 
     endpoint_spec: Optional[Dict[str, Any]] = None
-    if args.endpoint:
-        if not args.targets_file:
-            raise SystemExit("--endpoint requires --targets-file")
+    random_target_specs: Optional[List[Dict[str, Any]]] = None
+    targets_map: Optional[Dict[str, Dict[str, Any]]] = None
+    if args.targets_file:
         targets_map = load_targets(args.targets_file)
+    if args.endpoint:
+        if not targets_map:
+            raise SystemExit("--endpoint requires --targets-file")
         try:
             endpoint_spec = get_endpoint_spec(targets_map, args.endpoint)
         except KeyError as exc:
             raise SystemExit(str(exc))
+    elif targets_map:
+        random_target_specs = [
+            get_endpoint_spec(targets_map, endpoint) for endpoint in targets_map
+        ]
+        if not random_target_specs:
+            random_target_specs = None
 
     def bfs_ok(alive: List[bool], start: int) -> bool:
         if start >= len(alive) or not alive[start]:
@@ -385,10 +394,19 @@ def main() -> None:
     successes = 0
     for _ in range(args.samples):
         alive = draw()
+        trial_ok = False
+        failed_cache: Optional[Set[str]] = None
         if endpoint_spec:
-            failed = {services[i] for i, ok in enumerate(alive) if not ok}
+            failed_cache = {services[i] for i, ok in enumerate(alive) if not ok}
             try:
-                trial_ok = endpoint_success(graph, failed, endpoint_spec, args.mode)
+                trial_ok = endpoint_success(graph, failed_cache, endpoint_spec, args.mode)
+            except ValueError as exc:
+                raise SystemExit(str(exc))
+        elif random_target_specs:
+            failed_cache = {services[i] for i, ok in enumerate(alive) if not ok}
+            spec = random.choice(random_target_specs)
+            try:
+                trial_ok = endpoint_success(graph, failed_cache, spec, args.mode)
             except ValueError as exc:
                 raise SystemExit(str(exc))
         else:

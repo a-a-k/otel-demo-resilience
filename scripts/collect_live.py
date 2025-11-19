@@ -116,9 +116,6 @@ def main():
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
-    # Align measurement with chaos window
-    time.sleep(max(1, a.window))
-
     ok_probe, total_probe, probe_detail, per_endpoint = frontend_probe(
         a.probe_frontend,
         attempts=max(1, a.probe_attempts),
