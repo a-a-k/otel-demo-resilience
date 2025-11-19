@@ -164,6 +164,7 @@ jobs:
               --graph graph.json --replicas replicas.json \
               --p "${P_FAIL}" --samples "${SAMPLES}" \
               --mode "$MODE" \
+              --targets-file config/targets.json \
               --out "model_mode${MODE}_p${P_FAIL}.json"
           done
 

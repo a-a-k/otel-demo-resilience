@@ -44,6 +44,16 @@ def norm(s: str) -> str:
     return str(s).strip().lower().replace("_", "-")
 
 
+def norm_allowlist_name(s: str) -> str:
+    s = norm(s)
+    for suf in ("-service", "service"):
+        if s.endswith(suf):
+            s = s[: -len(suf)]
+    if s.endswith("-detection"):
+        s = s[: -len("-detection")]
+    return s
+
+
 def safe_endpoint_label(endpoint: str) -> str:
     out = endpoint.strip().replace("/", "_").replace(" ", "_")
     return "_".join([seg for seg in out.split("_") if seg]).lower() or "endpoint"
@@ -137,6 +147,10 @@ def prepare_graph(graph: Dict[str, Any]) -> None:
     graph["_adj_all"] = adj
     graph["_async_edge_set"] = async_edges
     graph["_name_to_idx"] = {norm(name): idx for idx, name in enumerate(services)}
+    allow_map = {}
+    for idx, name in enumerate(services):
+        allow_map.setdefault(norm_allowlist_name(name), idx)
+    graph["_allowlist_name_to_idx"] = allow_map
 
 
 def draw_alive_fixed(
@@ -372,13 +386,13 @@ def main() -> None:
     def load_allowlist(path: str) -> Set[int]:
         allowed = set()
         try:
-            name_to_idx = graph["_name_to_idx"]
+            name_to_idx = graph.get("_allowlist_name_to_idx") or graph["_name_to_idx"]
             with open(path, "r", encoding="utf-8") as fh:
                 for line in fh:
                     line = line.strip()
                     if not line or line.startswith("#"):
                         continue
-                    normalized = norm(line)
+                    normalized = norm_allowlist_name(line)
                     idx = name_to_idx.get(normalized)
                     if idx is not None:
                         allowed.add(idx)
