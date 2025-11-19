@@ -134,15 +134,23 @@ def prepare_graph(graph: Dict[str, Any]) -> None:
     graph["_name_to_idx"] = {norm(name): idx for idx, name in enumerate(services)}
 
 
-def draw_alive(services: List[str], replicas: Dict[str, Any], p_fail: float) -> List[bool]:
-    alive = [False] * len(services)
-    for idx, svc in enumerate(services):
-        replicas_count = int(replicas.get(svc, 1))
-        survivors = 0
-        for _ in range(max(1, replicas_count)):
-            if random.random() > p_fail:
-                survivors += 1
-        alive[idx] = survivors > 0
+def draw_alive_fixed(replica_counts: List[int], container_pool: List[int], p_fail: float) -> List[bool]:
+    """Sample a fixed-size failure set (without replacement) just like compose_chaos.sh."""
+    n_containers = len(container_pool)
+    if n_containers == 0:
+        return [True] * len(replica_counts)
+    kill_n = int(round(n_containers * p_fail))
+    if p_fail > 0 and kill_n == 0:
+        kill_n = 1
+    kill_n = min(max(0, kill_n), n_containers)
+    failed_counts: Dict[int, int] = {}
+    if kill_n > 0:
+        sample = random.sample(container_pool, kill_n)
+        for idx in sample:
+            failed_counts[idx] = failed_counts.get(idx, 0) + 1
+    alive = []
+    for idx, replicas_num in enumerate(replica_counts):
+        alive.append((replicas_num - failed_counts.get(idx, 0)) > 0)
     return alive
 
 
@@ -281,6 +289,12 @@ def main() -> None:
     entrypoints_raw = graph.get("entrypoints") or []
     entry = [idx for idx in entrypoints_raw if isinstance(idx, int) and idx < len(services)]
     replicas = json.load(open(args.replicas, "r", encoding="utf-8"))
+    replica_counts: List[int] = []
+    container_pool: List[int] = []
+    for idx, svc in enumerate(services):
+        r = max(1, int(replicas.get(svc, 1)))
+        replica_counts.append(r)
+        container_pool.extend([idx] * r)
 
     targets_simple = set()
     if args.targets:
@@ -333,7 +347,7 @@ def main() -> None:
         return False
 
     def draw() -> List[bool]:
-        return draw_alive(services, replicas, args.p)
+        return draw_alive_fixed(replica_counts, container_pool, args.p)
 
     successes = 0
     for _ in range(args.samples):

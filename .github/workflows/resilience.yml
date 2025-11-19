@@ -24,7 +24,7 @@ jobs:
       CHAOS_MEASURE_DELAY_SECONDS: "15"
       CHAOS_MEASURE_WINDOW_SECONDS: "40"
       LATENCY_P95_THRESHOLD_MS: "1500"
-      WINDOWS: "100"
+      WINDOWS: "30"
       SAMPLES: "5000000"
       OTEL_DEMO_REF: "main"
       TRACES_TIMEOUT: "600"
@@ -232,7 +232,7 @@ jobs:
             python3 scripts/collect_live.py \
               --window "${CHAOS_MEASURE_WINDOW_SECONDS}" \
               --probe-frontend "http://localhost:${ENVOY_PORT}" \
-              --probe-attempts 300 \
+              --probe-attempts 100 \
               --probe-checkout \
               --window-log "$WINDOW_LOG" \
               --out "live_p${P_FAIL}_chunk${CHUNK_ID}_${i}.json"
@@ -507,5 +507,4 @@ jobs:
                   wilcoxon_p = wilcoxon_signed_rank(entry['bias_all_list'], entry['bias_async_list'])
                   print(f"{endpoint}\t{entry['p_label']}\t{mean_all:.4f}\t{mean_async:.4f}\t{delta_mean:.4f}\t{entry['count']}\t{wilcoxon_p if wilcoxon_p is not None else 'na'}")
 
-          PY
           PY

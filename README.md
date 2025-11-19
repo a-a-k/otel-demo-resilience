@@ -69,7 +69,7 @@ Locust is used only to keep telemetry warm; it does not feed into the live metri
 
 ## Model: all-block vs async
 
-`scripts/resilience.py` builds a reachability graph from `graph.json`. For `mode=all-block`, all edges are used. For `mode=async`, edges listed in `async_edges` (i.e., `checkout→kafka`, `kafka→accounting`, `kafka→fraud-detection`) are removed so that the Kafka branch does not block checkout’s immediate success. Monte Carlo simulates `samples` failure scenarios based on per-service replicas (if `replicas.json` is `{}`, we assume 1 replica per service).
+`scripts/resilience.py` builds a reachability graph from `graph.json`. For `mode=all-block`, all edges are used. For `mode=async`, edges listed in `async_edges` (i.e., `checkout→kafka`, `kafka→accounting`, `kafka→fraud-detection`) are removed so that the Kafka branch does not block checkout’s immediate success. Monte Carlo now mirrors `compose_chaos.sh`: each trial samples a fixed-size kill set (rounded `p_fail * #containers`) without replacement, so the model and live chaos use identical failure semantics. If `replicas.json` is `{}`, we assume 1 replica per service.
 
 ## Live metric
 
