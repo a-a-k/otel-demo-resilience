@@ -32,6 +32,11 @@ def parse_args() -> argparse.Namespace:
         "--endpoint",
         help="Endpoint label from the targets JSON; enables per-endpoint success semantics.",
     )
+    ap.add_argument(
+        "--allowlist",
+        default="config/services_allowlist.txt",
+        help="Optional file with normalized service names eligible for chaos (mirrors compose_chaos allowlist).",
+    )
     return ap.parse_args()
 
 
@@ -134,9 +139,18 @@ def prepare_graph(graph: Dict[str, Any]) -> None:
     graph["_name_to_idx"] = {norm(name): idx for idx, name in enumerate(services)}
 
 
-def draw_alive_fixed(replica_counts: List[int], container_pool: List[int], p_fail: float) -> List[bool]:
+def draw_alive_fixed(
+    allowed_indices: List[int],
+    replica_counts: List[int],
+    container_pool: List[int],
+    p_fail: float,
+) -> List[bool]:
     """Sample a fixed-size failure set (without replacement) just like compose_chaos.sh."""
-    n_containers = len(container_pool)
+    if not allowed_indices:
+        # fall back to killing everything indiscriminately
+        allowed_indices = list(range(len(replica_counts)))
+    filtered_pool = [idx for idx in container_pool if idx in allowed_indices]
+    n_containers = len(filtered_pool)
     if n_containers == 0:
         return [True] * len(replica_counts)
     kill_n = int(round(n_containers * p_fail))
@@ -145,7 +159,7 @@ def draw_alive_fixed(replica_counts: List[int], container_pool: List[int], p_fai
     kill_n = min(max(0, kill_n), n_containers)
     failed_counts: Dict[int, int] = {}
     if kill_n > 0:
-        sample = random.sample(container_pool, kill_n)
+        sample = random.sample(filtered_pool, kill_n)
         for idx in sample:
             failed_counts[idx] = failed_counts.get(idx, 0) + 1
     alive = []
@@ -346,8 +360,27 @@ def main() -> None:
                     q.append(v)
         return False
 
+    def load_allowlist(path: str) -> Set[int]:
+        allowed = set()
+        try:
+            name_to_idx = graph["_name_to_idx"]
+            with open(path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    normalized = norm(line)
+                    idx = name_to_idx.get(normalized)
+                    if idx is not None:
+                        allowed.add(idx)
+        except FileNotFoundError:
+            allowed = set()
+        return allowed
+
+    allowlist_indices = load_allowlist(args.allowlist)
+
     def draw() -> List[bool]:
-        return draw_alive_fixed(replica_counts, container_pool, args.p)
+        return draw_alive_fixed(allowlist_indices, replica_counts, container_pool, args.p)
 
     successes = 0
     for _ in range(args.samples):
