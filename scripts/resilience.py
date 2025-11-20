@@ -33,9 +33,9 @@ def parse_args() -> argparse.Namespace:
         help="Endpoint label from the targets JSON; enables per-endpoint success semantics.",
     )
     ap.add_argument(
-        "--allowlist",
-        default="config/services_allowlist.txt",
-        help="Optional file with normalized service names eligible for chaos (mirrors compose_chaos allowlist).",
+        "--disallowlist",
+        default="config/services_disallowlist.txt",
+        help="Optional file with normalized service names that are excluded from chaos (everything else can be killed).",
     )
     return ap.parse_args()
 
@@ -44,7 +44,7 @@ def norm(s: str) -> str:
     return str(s).strip().lower().replace("_", "-")
 
 
-def norm_allowlist_name(s: str) -> str:
+def norm_disallowlist_name(s: str) -> str:
     s = norm(s)
     for suf in ("-service", "service"):
         if s.endswith(suf):
@@ -149,8 +149,8 @@ def prepare_graph(graph: Dict[str, Any]) -> None:
     graph["_name_to_idx"] = {norm(name): idx for idx, name in enumerate(services)}
     allow_map = {}
     for idx, name in enumerate(services):
-        allow_map.setdefault(norm_allowlist_name(name), idx)
-    graph["_allowlist_name_to_idx"] = allow_map
+        allow_map.setdefault(norm_disallowlist_name(name), idx)
+    graph["_disallowlist_name_to_idx"] = allow_map
 
 
 def draw_alive_fixed(
@@ -383,27 +383,28 @@ def main() -> None:
                     q.append(v)
         return False
 
-    def load_allowlist(path: str) -> Set[int]:
-        allowed = set()
+    def load_disallowlist(path: str) -> Set[int]:
+        disallowed = set()
         try:
-            name_to_idx = graph.get("_allowlist_name_to_idx") or graph["_name_to_idx"]
+            name_to_idx = graph.get("_disallowlist_name_to_idx") or graph["_name_to_idx"]
             with open(path, "r", encoding="utf-8") as fh:
                 for line in fh:
                     line = line.strip()
                     if not line or line.startswith("#"):
                         continue
-                    normalized = norm_allowlist_name(line)
+                    normalized = norm_disallowlist_name(line)
                     idx = name_to_idx.get(normalized)
                     if idx is not None:
-                        allowed.add(idx)
+                        disallowed.add(idx)
         except FileNotFoundError:
-            allowed = set()
-        return allowed
+            disallowed = set()
+        return disallowed
 
-    allowlist_indices = load_allowlist(args.allowlist)
+    disallowlist_indices = load_disallowlist(args.disallowlist)
+    allowed_indices = [idx for idx in range(len(services)) if idx not in disallowlist_indices]
 
     def draw() -> List[bool]:
-        return draw_alive_fixed(allowlist_indices, replica_counts, container_pool, args.p)
+        return draw_alive_fixed(allowed_indices, replica_counts, container_pool, args.p)
 
     successes = 0
     for _ in range(args.samples):

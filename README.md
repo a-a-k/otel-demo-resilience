@@ -69,7 +69,7 @@ Locust is used only to keep telemetry warm; it does not feed into the live metri
 
 ## Model: all-block vs async
 
-`scripts/resilience.py` builds a reachability graph from `graph.json`. For `mode=all-block`, all edges are used. For `mode=async`, edges listed in `async_edges` (i.e., `checkout→kafka`, `kafka→accounting`, `kafka→fraud-detection`) are removed so that the Kafka branch does not block checkout’s immediate success. Monte Carlo now mirrors `compose_chaos.sh`: each trial samples a fixed-size kill set (rounded `p_fail * #containers`) without replacement **only among the services listed in** `config/services_allowlist.txt`, so both failure semantics (кто может умереть и сколько именно) совпадают. Если указать `--targets-file`, каждая симуляция дополнительно случайно выбирает один из объявленных HTTP‑эндпойнтов и проверяет его достижимость – ровно как live‑пробы перемешивают эндпойнты. If `replicas.json` is `{}`, we assume 1 replica per service.
+`scripts/resilience.py` builds a reachability graph from `graph.json`. For `mode=all-block`, all edges are used. For `mode=async`, edges listed in `async_edges` (i.e., `checkout→kafka`, `kafka→accounting`, `kafka→fraud-detection`) are removed so that the Kafka branch does not block checkout’s immediate success. Monte Carlo now mirrors `compose_chaos.sh`: each trial samples a fixed-size kill set (rounded `p_fail * #containers`) without replacement **from all services except those in** `config/services_disallowlist.txt` (entrypoints/infra are skipped). Both the graph shape and the set of kill-eligible services drive model accuracy. If `--targets-file` is provided, each simulation randomly picks one declared HTTP endpoint and checks only that target—matching how live probes rotate endpoints. If `replicas.json` is `{}`, we assume 1 replica per service.
 
 ## Live metric
 
@@ -101,8 +101,8 @@ Locust is used only to keep telemetry warm; it does not feed into the live metri
 
 - `--targets-file config/targets.json` loads endpoint specs.
 - `--endpoint "GET /api/products"` runs Monte Carlo strictly for that endpoint.
-- Без `--endpoint`, но с `--targets-file`, каждая симуляция выбирает случайный эндпойнт (равномерно по ключам JSON) и проверяет только его, что согласуется с поведением `collect_live.py`.
-- `--allowlist config/services_allowlist.txt` keeps the failure sampling bound to the same service set as live chaos (defaults to the provided file).
+- Without `--endpoint` but with `--targets-file`, each simulation picks a random endpoint (uniform over JSON keys) and checks only that one, mirroring `collect_live.py`.
+- `--disallowlist config/services_disallowlist.txt` excludes the listed services from chaos (everything else is eligible).
 
 When `--endpoint` is set, the script writes `model_{mode}_e{endpoint}_p{p}_chunk{chunk}.json` and includes the endpoint label in the payload. The CI workflow iterates over every endpoint in `targets.json`, so artifacts are emitted for both `all-block` and `async` semantics.
 

@@ -1,15 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 P_FAIL="${1:?fraction like 0.3}"
-ALLOWLIST="${2:?services_allowlist.txt}"
+DISALLOWLIST="${2:-config/services_disallowlist.txt}"
 WINDOW="${3:-30}"
 LOG_FILE="${4:-window_log.jsonl}"
 PROJ="${COMPOSE_PROJECT_NAME:-$(basename vendor/opentelemetry-demo)}"
 COMPOSE_DIR="${COMPOSE_DIR:-vendor/opentelemetry-demo}"
 
-INFRA_RE='(frontend|frontend-proxy|jaeger|grafana|otel-collector|loadgenerator|prometheus|kafka|zipkin)$'
+norm() {
+  echo "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/_/-/g; s/(-)?service$//; s/-detection$//'
+}
 
-# Build candidate container names from allowlist via Compose labels
+# Load disallowlist (normalized)
+declare -A DISALLOW
+if [ -f "$DISALLOWLIST" ]; then
+  while IFS= read -r svc; do
+    [[ -z "$svc" || "$svc" =~ ^# ]] && continue
+    key=$(norm "$svc")
+    DISALLOW["$key"]=1
+  done < "$DISALLOWLIST"
+fi
+
+# Build candidate container names from compose services, excluding disallowlist
 CANDIDATES=()
 compose_rows=()
 if [ -d "$COMPOSE_DIR" ]; then
@@ -23,28 +35,28 @@ if [ ${#compose_rows[@]} -eq 0 ]; then
       --format '{{.Names}} {{.Label "com.docker.compose.service"}}'
   )
 fi
-if [ -f "$ALLOWLIST" ] && [ ${#compose_rows[@]} -gt 0 ]; then
-  while IFS= read -r svc; do
-    [[ -z "$svc" || "$svc" =~ ^# ]] && continue
-    svc_norm=$(echo "$svc" | tr '[:upper:]' '[:lower:]' | sed -E 's/_/-/g; s/(-)?service$//; s/-detection$//')
-    for row in "${compose_rows[@]}"; do
-      name=$(echo "$row" | awk '{print $1}')
-      lab=$(echo "$row" | awk '{print $2}')
-      lab_norm=$(echo "$lab" | tr '[:upper:]' '[:lower:]' | sed -E 's/_/-/g; s/(-)?service$//; s/-detection$//')
-      if [[ "$lab_norm" == "$svc_norm" && -n "$name" ]]; then
-        CANDIDATES+=("$name")
-      fi
-    done
-  done < "$ALLOWLIST"
+if [ ${#compose_rows[@]} -gt 0 ]; then
+  for row in "${compose_rows[@]}"; do
+    name=$(echo "$row" | awk '{print $1}')
+    lab=$(echo "$row" | awk '{print $2}')
+    lab_norm=$(norm "$lab")
+    if [[ -n "$name" && -z "${DISALLOW[$lab_norm]:-}" ]]; then
+      CANDIDATES+=("$name")
+    fi
+  done
 fi
 
-# Fallback auto-discovery excluding infra/entrypoints
+# Fallback auto-discovery (still honor disallowlist)
 if [ ${#CANDIDATES[@]} -eq 0 ]; then
-  while IFS= read -r name; do CANDIDATES+=("$name"); done < <(
-    for row in "${compose_rows[@]}"; do echo "$row"; done \
-    | awk 'NF==2 {print $1" "$2}' \
-    | awk "!/$INFRA_RE/ {print \$1}"
-  )
+  while IFS= read -r row; do
+    name=$(echo "$row" | awk '{print $1}')
+    lab=$(echo "$row" | awk '{print $2}')
+    lab_norm=$(norm "$lab")
+    if [[ -n "$name" && -z "${DISALLOW[$lab_norm]:-}" ]]; then
+      CANDIDATES+=("$name")
+    fi
+  done < <(docker ps --filter "label=com.docker.compose.project=${PROJ}" \
+      --format '{{.Names}} {{.Label "com.docker.compose.service"}}')
 fi
 
 TOTAL=${#CANDIDATES[@]}

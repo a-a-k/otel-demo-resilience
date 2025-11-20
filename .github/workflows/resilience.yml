@@ -24,7 +24,7 @@ jobs:
       CHAOS_MEASURE_DELAY_SECONDS: "15"
       CHAOS_MEASURE_WINDOW_SECONDS: "40"
       LATENCY_P95_THRESHOLD_MS: "1500"
-      WINDOWS: "100"
+      WINDOWS: "30"
       SAMPLES: "5000000"
       OTEL_DEMO_REF: "main"
       TRACES_TIMEOUT: "600"
@@ -42,7 +42,7 @@ jobs:
       HEALTH_CHECK_PROBE_ATTEMPTS: "10"
       LOCUST_USERS: "200"
       LOCUST_SPAWN_RATE: "50"
-      ALLOWLIST_FILE: 'config/services_allowlist.txt'
+      DISALLOWLIST_FILE: 'config/services_disallowlist.txt'
 
     steps:
       - uses: actions/checkout@v4
@@ -164,6 +164,7 @@ jobs:
               --graph graph.json --replicas replicas.json \
               --p "${P_FAIL}" --samples "${SAMPLES}" \
               --mode "$MODE" \
+              --disallowlist "${DISALLOWLIST_FILE}" \
               --targets-file config/targets.json \
               --out "model_mode${MODE}_p${P_FAIL}.json"
           done
@@ -200,6 +201,8 @@ jobs:
                       "graph.json",
                       "--replicas",
                       "replicas.json",
+                      "--disallowlist",
+                      os.environ["DISALLOWLIST_FILE"],
                       "--p",
                       p,
                       "--samples",
@@ -227,7 +230,7 @@ jobs:
           : > "$WINDOW_LOG"
           for i in $(seq 1 "${WINDOWS}"); do
             echo "::group::chunk=${CHUNK_ID} idx=$i"
-            bash scripts/compose_chaos.sh "${P_FAIL}" "${ALLOWLIST_FILE}" "${CHAOS_WINDOW_SECONDS}" "$WINDOW_LOG" &
+            bash scripts/compose_chaos.sh "${P_FAIL}" "${DISALLOWLIST_FILE}" "${CHAOS_WINDOW_SECONDS}" "$WINDOW_LOG" &
             CHAOS_PID=$!
             sleep "${CHAOS_MEASURE_DELAY_SECONDS}"
             python3 scripts/collect_live.py \

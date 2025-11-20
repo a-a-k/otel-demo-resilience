@@ -1,0 +1,9 @@
+# Services excluded from chaos (entrypoints/infra). Everything else can be killed.
+frontend
+frontend-proxy
+jaeger
+grafana
+otel-collector
+prometheus
+loadgenerator
+zipkin

@@ -34,7 +34,7 @@ def read_json_lines(path: Path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--allowlist", required=True)
+    ap.add_argument("--disallowlist", required=True)
     ap.add_argument("--window", type=int, default=30)
     ap.add_argument("--p-fail", type=float, default=1.0)
     ap.add_argument("--log", default="validation_window_log.jsonl")
@@ -98,7 +98,7 @@ def main():
             "bash",
             "scripts/compose_chaos.sh",
             str(args.p_fail),
-            args.allowlist,
+            args.disallowlist,
             str(args.window),
             str(log_path),
         ]
