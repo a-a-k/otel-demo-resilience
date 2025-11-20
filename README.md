@@ -87,7 +87,7 @@ Locust is used only to keep telemetry warm; it does not feed into the live metri
   },
   "POST /api/checkout": {
     "entry": "frontend",
-    "all_of": ["checkout", "accounting", "fraud-detection"],
+    "all_of": ["checkout", "cart", "payment", "shipping"],
     "exclude_async": true
   }
 }

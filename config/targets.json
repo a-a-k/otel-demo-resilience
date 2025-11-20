@@ -13,7 +13,7 @@
   },
   "POST /api/checkout": {
     "entry": "frontend",
-    "any_of": ["checkout"],
+    "all_of": ["checkout", "cart", "payment", "shipping"],
     "exclude_async": true
   }
 }
