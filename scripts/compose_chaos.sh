@@ -26,12 +26,12 @@ CANDIDATES=()
 compose_rows=()
 if [ -d "$COMPOSE_DIR" ]; then
   while IFS= read -r line; do compose_rows+=("$line"); done < <(
-    (cd "$COMPOSE_DIR" && docker compose ps --format '{{.Name}} {{.Service}}' || true)
+    (cd "$COMPOSE_DIR" && docker compose ps --all --format '{{.Name}} {{.Service}}' || true)
   )
 fi
 if [ ${#compose_rows[@]} -eq 0 ]; then
   while IFS= read -r line; do compose_rows+=("$line"); done < <(
-    docker ps --filter "label=com.docker.compose.project=${PROJ}" \
+    docker ps --all --filter "label=com.docker.compose.project=${PROJ}" \
       --format '{{.Names}} {{.Label "com.docker.compose.service"}}'
   )
 fi
@@ -61,6 +61,12 @@ fi
 
 TOTAL=${#CANDIDATES[@]}
 export TOTAL
+
+# Ensure all eligible containers are up before sampling a kill set.
+if [ ${#CANDIDATES[@]} -gt 0 ]; then
+  echo "[chaos] ensuring eligible containers are running..."
+  printf '%s\n' "${CANDIDATES[@]}" | xargs -r -n10 docker start >/dev/null 2>&1 || true
+fi
 
 : > /tmp/killset.txt
 if [ "$TOTAL" > 0 ] && awk "BEGIN {exit !($P_FAIL > 0)}"; then
@@ -118,23 +124,49 @@ if [ -s /tmp/killset.txt ]; then
   printf '  %s\n' "${VICTIMS[@]}"
   docker update --restart=no "${VICTIMS[@]}" >/dev/null 2>&1 || true
   echo "[chaos] stopping victims (timeout=1s)..."
+  set -x
   xargs -r -a /tmp/killset.txt -n1 -P4 docker stop --timeout 1 || true
+  set +x
   echo "[chaos] stop issued; victim statuses:"
+  ANOMALIES=()
   for v in "${VICTIMS[@]}"; do
     status=$(docker inspect -f '{{.State.Status}}' "$v" 2>/dev/null || echo "unknown")
     echo "  $v -> $status"
-  done
-  # Log any victims that are still not in exited/dead state after stop.
-  for v in "${VICTIMS[@]}"; do
-    status=$(docker inspect -f '{{.State.Status}}' "$v" 2>/dev/null || echo "unknown")
     if [[ "$status" != "exited" && "$status" != "dead" ]]; then
-      echo "[chaos] warning: container '$v' status='$status' after stop" >&2
+      ANOMALIES+=("$v:$status")
     fi
   done
+  if [ ${#ANOMALIES[@]} -gt 0 ]; then
+    echo "[chaos] warning: anomalies after stop: ${ANOMALIES[*]}" >&2
+    python3 - <<'PY' "$P_FAIL" "$WINDOW" "$LOG_FILE" "${ANOMALIES[@]}"
+import sys, json, os
+p=float(sys.argv[1]); win=int(sys.argv[2]); log=sys.argv[3]
+anoms=sys.argv[4:]
+names=[]
+try:
+    with open('/tmp/killset.txt') as f:
+        names=[l.strip() for l in f if l.strip()]
+except Exception:
+    names=[]
+entry={
+    'p_fail': p,
+    'eligible': int(os.environ.get('TOTAL','0')),
+    'killed': len(names),
+    'services': sorted(names),
+    'window_s': win,
+    'anomaly': {'bad_stop': anoms}
+}
+with open(log, 'a') as fh:
+    fh.write(json.dumps(entry) + "\n")
+PY
+  fi
   echo "[chaos] sleeping for ${WINDOW}s..."
   sleep "${WINDOW}"
   echo "[chaos] waking up; starting victims..."
+  set -x
   xargs -r -a /tmp/killset.txt -n1 -P4 docker start || true
+  set +x
+  echo "[chaos] waking up; starting victims..."
   echo "[chaos] start issued; victim statuses:"
   for v in "${VICTIMS[@]}"; do
     status=$(docker inspect -f '{{.State.Status}}' "$v" 2>/dev/null || echo "unknown")

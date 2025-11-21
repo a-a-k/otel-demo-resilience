@@ -230,7 +230,7 @@ jobs:
           : > "$WINDOW_LOG"
           for i in $(seq 1 "${WINDOWS}"); do
             echo "::group::chunk=${CHUNK_ID} idx=$i"
-            bash -x scripts/compose_chaos.sh "${P_FAIL}" "${DISALLOWLIST_FILE}" "${CHAOS_WINDOW_SECONDS}" "$WINDOW_LOG" &
+            bash scripts/compose_chaos.sh "${P_FAIL}" "${DISALLOWLIST_FILE}" "${CHAOS_WINDOW_SECONDS}" "$WINDOW_LOG" &
             CHAOS_PID=$!
             sleep "${CHAOS_MEASURE_DELAY_SECONDS}"
             python3 scripts/collect_live.py \
@@ -338,8 +338,29 @@ jobs:
       - name: Print quick report and enforce monotonicity
         run: |
           python3 - << 'PY'
-          import glob, json, sys, math, csv
+          import glob, json, sys, math, csv, re
           from collections import defaultdict
+          def parse_live_files(glob_pattern):
+              files = sorted(glob.glob(glob_pattern, recursive=True))
+              data = defaultdict(list)
+              for path in files:
+                  m = re.search(r"live_p([^_]+)_chunk", path)
+                  if not m:
+                      continue
+                  p_label = m.group(1)
+                  try:
+                      p_val = float(p_label)
+                  except ValueError:
+                      continue
+                  try:
+                      obj = load_json_relaxed(path)
+                  except Exception:
+                      continue
+                  r_live = float(obj.get("R_live", 0.0))
+                  log = obj.get("window_log") or {}
+                  anomaly = log.get("anomaly")
+                  data[p_val].append((p_label, r_live, anomaly))
+              return data
 
           def load_json_relaxed(path):
               with open(path, "r", encoding="utf-8") as fh:
@@ -361,21 +382,10 @@ jobs:
                       idx += 1
                       continue
               raise ValueError(f"Unable to parse JSON in {path}")
-          live_summary_files = sorted(glob.glob('**/summary_p*_chunk*.json', recursive=True))
-          if not live_summary_files:
-              print('No live summary files found', file=sys.stderr)
+          live_values = parse_live_files('**/live_p*_chunk*_*.json')
+          if not live_values:
+              print('No live files found', file=sys.stderr)
               sys.exit(1)
-          live_agg = {}
-          p_labels = {}
-          for f in live_summary_files:
-              s = load_json_relaxed(f)
-              p = float(s['p_fail'])
-              p_str = s.get('p_fail_str', str(p))
-              entry = live_agg.setdefault(p, {'sum':0.0,'sum_sq':0.0,'n':0})
-              entry['sum'] += s['sum']
-              entry['sum_sq'] += s['sum_sq']
-              entry['n'] += s['windows']
-              p_labels[p] = p_str
 
           def wilcoxon_signed_rank(x, y):
               diffs = [a - b for a, b in zip(x, y) if a != b]
@@ -439,84 +449,89 @@ jobs:
 
           mix_rows = load_mix_rows(glob.glob('**/reports/rows_p*_chunk*_mix.csv', recursive=True))
 
-          print('p\tR_model_all_block\tR_model_async\tR_live_mean\tR_live_sd\tN')
-          if mix_rows:
-              grouped = defaultdict(lambda: {"w":0.0,"rm_block":0.0,"rm_async":0.0,"live":0.0,"vals":0.0,"n":0,"p_label":None,"live_vals":[]})
-              for row in mix_rows:
-                  w = row["weight"] if row["weight"] > 0 else 1.0
-                  p = row["p"]
-                  entry = grouped[p]
-                  entry["p_label"] = row["p_label"]
-                  entry["w"] += w
-                  entry["rm_block"] += row["r_model_block"] * w
-                  entry["rm_async"] += row["r_model_async"] * w
-                  entry["live"] += row["r_live"] * w
-                  entry["live_vals"].append(row["r_live"])
-                  entry["n"] += 1
-              for p in sorted(grouped.keys()):
-                  entry = grouped[p]
-                  w = entry["w"] or 1.0
-                  live_mean = entry["live"] / w
-                  rm_block = entry["rm_block"] / w
-                  rm_async = entry["rm_async"] / w
-                  vals = entry["live_vals"]
-                  if vals:
-                      m = sum(vals)/len(vals)
-                      sd = math.sqrt(max(0.0, sum((x-m)**2 for x in vals)/len(vals)))
-                  else:
-                      sd = 0.0
-                  print(f"{p:.1f}\t{rm_block:.4f}\t{rm_async:.4f}\t{live_mean:.4f}\t{sd:.4f}\t{entry['n']}")
-          else:
-              combined = []
-              for p, data in live_agg.items():
-                  p_label = p_labels[p]
-                  n = data['n']
-                  if n == 0:
-                      mean = 0.0
-                      sd = 0.0
-                  else:
-                      mean = data['sum']/n
-                      variance = max(0.0, data['sum_sq']/n - mean*mean)
+          def print_table(label, live_map, use_mix):
+              print(f"\n{label}")
+              print('p\tR_model_all_block\tR_model_async\tR_live_mean\tR_live_sd\tN')
+              if use_mix and mix_rows:
+                  grouped = defaultdict(lambda: {"w":0.0,"rm_block":0.0,"rm_async":0.0,"live":0.0,"vals":0.0,"n":0,"p_label":None,"live_vals":[]})
+                  for row in mix_rows:
+                      w = row["weight"] if row["weight"] > 0 else 1.0
+                      p = row["p"]
+                      if p not in live_map:
+                          continue
+                      entry = grouped[p]
+                      entry["p_label"] = row["p_label"]
+                      entry["w"] += w
+                      entry["rm_block"] += row["r_model_block"] * w
+                      entry["rm_async"] += row["r_model_async"] * w
+                      entry["live"] += row["r_live"] * w
+                      entry["live_vals"].append(row["r_live"])
+                      entry["n"] += 1
+                  for p in sorted(grouped.keys()):
+                      entry = grouped[p]
+                      w = entry["w"] or 1.0
+                      live_mean = entry["live"] / w
+                      rm_block = entry["rm_block"] / w
+                      rm_async = entry["rm_async"] / w
+                      vals = entry["live_vals"]
+                      if vals:
+                          m = sum(vals)/len(vals)
+                          sd = math.sqrt(max(0.0, sum((x-m)**2 for x in vals)/len(vals)))
+                      else:
+                          sd = 0.0
+                      print(f"{p:.1f}\t{rm_block:.4f}\t{rm_async:.4f}\t{live_mean:.4f}\t{sd:.4f}\t{entry['n']}")
+              else:
+                  combined = []
+                  for p, values in live_map.items():
+                      n = len(values)
+                      if n == 0:
+                          continue
+                      p_label = values[0][0]
+                      mean = sum(v[1] for v in values)/n
+                      variance = max(0.0, sum((v[1]-mean)**2 for v in values)/n)
                       sd = math.sqrt(variance)
-                  row = {
-                      'p': p,
-                      'p_label': p_label,
-                      'live_mean': mean,
-                      'live_sd': sd,
-                      'n': n,
-                      'model_all_block': model_value('all-block', p_label),
-                      'model_async': model_value('async', p_label)
-                  }
-                  combined.append(row)
-              combined.sort(key=lambda x: x['p'])
-              rl_series = [(row['p'], row['live_mean']) for row in combined]
-              ok_live = True
-              prev_rl = None
-              for p, mean in rl_series:
-                  if prev_rl is not None and mean > prev_rl + 1e-9:
-                      ok_live = False
-                  prev_rl = mean
-              ok_model = True
-              prev_rm = {'all-block': None, 'async': None}
-              for row in combined:
-                  p = row['p']
-                  rm_block = row['model_all_block']
-                  rm_async = row['model_async']
-                  rl = row['live_mean']
-                  sd = row['live_sd']
-                  n = row['n']
-                  print(f"{p:.1f}\t{rm_block:.4f}\t{rm_async:.4f}\t{rl:.4f}\t{sd:.4f}\t{n}")
-                  if prev_rm['all-block'] is not None and rm_block > prev_rm['all-block'] + 1e-9:
-                      ok_model = False
-                  if prev_rm['async'] is not None and rm_async > prev_rm['async'] + 1e-9:
-                      ok_model = False
-                  prev_rm['all-block'] = rm_block
-                  prev_rm['async'] = rm_async
-              if not ok_model:
-                  print('Monotonicity check failed: R_model is not non-increasing with p_fail (per mode)', file=sys.stderr)
-                  sys.exit(1)
-              if not ok_live:
-                  print('Warning: R_live_mean not non-increasing with p_fail (informational only)', file=sys.stderr)
+                      row = {
+                          'p': p,
+                          'p_label': p_label,
+                          'live_mean': mean,
+                          'live_sd': sd,
+                          'n': n,
+                          'model_all_block': model_value('all-block', p_label),
+                          'model_async': model_value('async', p_label)
+                      }
+                      combined.append(row)
+                  combined.sort(key=lambda x: x['p'])
+                  ok_model = True
+                  prev_rm = {'all-block': None, 'async': None}
+                  for row in combined:
+                      p = row['p']
+                      rm_block = row['model_all_block']
+                      rm_async = row['model_async']
+                      rl = row['live_mean']
+                      sd = row['live_sd']
+                      n = row['n']
+                      print(f"{p:.1f}\t{rm_block:.4f}\t{rm_async:.4f}\t{rl:.4f}\t{sd:.4f}\t{n}")
+                      if prev_rm['all-block'] is not None and rm_block > prev_rm['all-block'] + 1e-9:
+                          ok_model = False
+                      if prev_rm['async'] is not None and rm_async > prev_rm['async'] + 1e-9:
+                          ok_model = False
+                      prev_rm['all-block'] = rm_block
+                      prev_rm['async'] = rm_async
+                  if not ok_model:
+                      print('Monotonicity check failed: R_model is not non-increasing with p_fail (per mode)', file=sys.stderr)
+                      sys.exit(1)
+
+          # Split live windows into all / clean (no anomaly)
+          live_all = defaultdict(list)
+          live_clean = defaultdict(list)
+          for p_val, entries in live_values.items():
+              for p_label, r_live, anomaly in entries:
+                  live_all[p_val].append((p_label, r_live))
+                  if not anomaly:
+                      live_clean[p_val].append((p_label, r_live))
+
+          print_table("All windows", live_all, True)
+          print_table("Clean windows (no anomaly)", live_clean, False)
 
           def load_rows(paths):
               rows = []
