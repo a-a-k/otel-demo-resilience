@@ -6,4 +6,11 @@ grafana
 otel-collector
 prometheus
 loadgenerator
+load-generator
+opensearch
+postgresql
+image-provider
+llm
+flagd-ui
+valkey-cart
 zipkin

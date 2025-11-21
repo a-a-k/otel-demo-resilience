@@ -230,7 +230,7 @@ jobs:
           : > "$WINDOW_LOG"
           for i in $(seq 1 "${WINDOWS}"); do
             echo "::group::chunk=${CHUNK_ID} idx=$i"
-            bash scripts/compose_chaos.sh "${P_FAIL}" "${DISALLOWLIST_FILE}" "${CHAOS_WINDOW_SECONDS}" "$WINDOW_LOG" &
+            bash -x scripts/compose_chaos.sh "${P_FAIL}" "${DISALLOWLIST_FILE}" "${CHAOS_WINDOW_SECONDS}" "$WINDOW_LOG" &
             CHAOS_PID=$!
             sleep "${CHAOS_MEASURE_DELAY_SECONDS}"
             python3 scripts/collect_live.py \
