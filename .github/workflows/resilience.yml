@@ -343,6 +343,7 @@ jobs:
           def parse_live_files(glob_pattern):
               files = sorted(glob.glob(glob_pattern, recursive=True))
               data = defaultdict(list)
+              anomalies = []
               for path in files:
                   m = re.search(r"live_p([^_]+)_chunk", path)
                   if not m:
@@ -360,7 +361,13 @@ jobs:
                   log = obj.get("window_log") or {}
                   anomaly = log.get("anomaly")
                   data[p_val].append((p_label, r_live, anomaly))
-              return data
+                  if anomaly:
+                      # Try to infer an index from filename
+                      m_idx = re.search(r"_chunk([^_]+)_([0-9]+)\.json", path)
+                      chunk = m_idx.group(1) if m_idx else "?"
+                      idx = m_idx.group(2) if m_idx else path
+                      anomalies.append({"p": p_val, "p_label": p_label, "chunk": chunk, "idx": idx, "file": path, "anomaly": anomaly})
+              return data, anomalies
 
           def load_json_relaxed(path):
               with open(path, "r", encoding="utf-8") as fh:
@@ -382,7 +389,7 @@ jobs:
                       idx += 1
                       continue
               raise ValueError(f"Unable to parse JSON in {path}")
-          live_values = parse_live_files('**/live_p*_chunk*_*.json')
+          live_values, anomalies = parse_live_files('**/live_p*_chunk*_*.json')
           if not live_values:
               print('No live files found', file=sys.stderr)
               sys.exit(1)
@@ -449,10 +456,10 @@ jobs:
 
           mix_rows = load_mix_rows(glob.glob('**/reports/rows_p*_chunk*_mix.csv', recursive=True))
 
-          def print_table(label, live_map, use_mix):
+          def print_table(label, live_map):
               print(f"\n{label}")
               print('p\tR_model_all_block\tR_model_async\tR_live_mean\tR_live_sd\tN')
-              if use_mix and mix_rows:
+              if mix_rows:
                   grouped = defaultdict(lambda: {"w":0.0,"rm_block":0.0,"rm_async":0.0,"live":0.0,"vals":0.0,"n":0,"p_label":None,"live_vals":[]})
                   for row in mix_rows:
                       w = row["weight"] if row["weight"] > 0 else 1.0
@@ -530,8 +537,13 @@ jobs:
                   if not anomaly:
                       live_clean[p_val].append((p_label, r_live))
 
-          print_table("All windows", live_all, True)
-          print_table("Clean windows (no anomaly)", live_clean, False)
+          if anomalies:
+              print("\nAnomalous windows detected:")
+              for a in anomalies:
+                  print(f"p={a['p_label']} chunk={a['chunk']} idx={a['idx']} {a.get('anomaly')}")
+
+          print_table("All windows", live_all)
+          print_table("Clean windows (no anomaly)", live_clean)
 
           def load_rows(paths):
               rows = []
