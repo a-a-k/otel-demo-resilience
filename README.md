@@ -48,13 +48,13 @@ python3 scripts/resilience.py \
 The workflow `.github/workflows/resilience.yml` boots the demo and runs chaos experiments for the matrix:
 
 - `p_fail ∈ {0.1, 0.3, 0.5, 0.7, 0.9}`
-- `chunk ∈ {1,2}` (the same chaos level is executed twice for averaging)
+- `chunk ∈ {1 … 50}` (the same chaos level is executed many times for averaging)
 
 Within each job:
 1. Dependencies are collected **only from traces** (`scripts/traces_to_deps.py --fail-on-empty`). If Jaeger does not have traces, the job fails; there is no `/dependencies` fallback.
 2. `scripts/deps_to_graph.py` produces a single graph with an `async_edges` field (all edges touching Kafka). Topology is identical for both model semantics.
 3. `scripts/resilience.py` runs twice (all-block and async) on the same `graph.json`. No seeds are used — Monte Carlo relies on the natural PRNG.
-4. Chaos (`scripts/compose_chaos.sh`) executes 10 windows of 60 s. In each window we run 30 HTTP probes (`collect_live.py`) and compute `R_live = probe_ok / probe_total`. Probes target `/api/products`, `/api/recommendations`, `/api/cart`, and the full checkout flow (POST).
+4. Chaos (`scripts/compose_chaos.sh`) executes 150 windows of 60 s. After a 15 s delay in each window, `collect_live.py` sends a burst of 150 HTTP probes and computes `R_live = probe_ok / probe_total`. Probes target `/api/products`, `/api/recommendations`, `/api/cart`, and the full checkout flow (POST).
 5. `scripts/summarize_results.py` aggregates model and live data, and the final “Print quick report” step prints a table with columns `p`, `R_model_all_block`, `R_model_async`, `R_live_mean`, `R_live_sd`, `N`.
 
 Artifacts per matrix cell:
@@ -73,7 +73,7 @@ Locust is used only to keep telemetry warm; it does not feed into the live metri
 
 ## Live metric
 
-`R_live` relies entirely on HTTP probes. Each window executes `probe_attempts` requests (30 in CI), randomly alternating endpoints. The checkout scenario performs a full POST workflow (`cart → checkout`). `probe_detail` logs URL, method (`GET/POST`), status, and errors. `R_live = probe_ok / probe_total`, while `R_live_sd` and `N` describe the dispersion across windows. Without seeds, chaos kill sets and probes differ each run.
+`R_live` relies entirely on HTTP probes. Each window fires `probe_attempts` requests (150 in CI) as a burst after chaos starts, randomly alternating endpoints. The checkout scenario performs a full POST workflow (`cart → checkout`). `probe_detail` logs URL, method (`GET/POST`), status, and errors. `R_live = probe_ok / probe_total`, while `R_live_sd` and `N` describe the dispersion across windows. Without seeds, chaos kill sets and probes differ each run.
 
 ## Per-endpoint targets & evaluation
 

@@ -14,7 +14,8 @@ jobs:
       max-parallel: 20
       matrix:
         p_fail: [ "0.1", "0.3", "0.5", "0.7", "0.9" ]
-        chunk: [ "1", "2", "3", "4"] #, "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25" ]
+        chunk: [ "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25",
+         "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50" ]
 
     env:
       ENVOY_PORT: "8080"
@@ -24,7 +25,7 @@ jobs:
       CHAOS_MEASURE_DELAY_SECONDS: "15"
       CHAOS_MEASURE_WINDOW_SECONDS: "40"
       LATENCY_P95_THRESHOLD_MS: "1500"
-      WINDOWS: "30"
+      WINDOWS: "150"
       SAMPLES: "5000000"
       OTEL_DEMO_REF: "main"
       TRACES_TIMEOUT: "600"
@@ -236,7 +237,7 @@ jobs:
             python3 scripts/collect_live.py \
               --window "${CHAOS_MEASURE_WINDOW_SECONDS}" \
               --probe-frontend "http://localhost:${ENVOY_PORT}" \
-              --probe-attempts 100 \
+              --probe-attempts 150 \
               --probe-checkout \
               --window-log "$WINDOW_LOG" \
               --out "live_p${P_FAIL}_chunk${CHUNK_ID}_${i}.json"
