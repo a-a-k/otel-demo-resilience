@@ -54,9 +54,8 @@ Within each job:
 1. Dependencies are collected **only from traces** (`scripts/traces_to_deps.py --fail-on-empty`). If Jaeger does not have traces, the job fails; there is no `/dependencies` fallback.
 2. `scripts/deps_to_graph.py` produces a single graph with an `async_edges` field (all edges touching Kafka). Topology is identical for both model semantics.
 3. `scripts/resilience.py` runs twice (all-block and async) on the same `graph.json`. No seeds are used — Monte Carlo relies on the natural PRNG.
-4. Chaos (`scripts/compose_chaos.sh`) executes 10 windows of 60 s. Before each window all eligible containers are started, a kill set is sampled (disallowlist `config/services_disallowlist.txt` excludes frontend/infra), and victims are stopped for the full window duration. Every second we verify victims stay `exited/dead`; any restarts are logged as `anomaly` in `window_log`.
-5. Each window runs 30 HTTP probes (`collect_live.py`) and computes `R_live = probe_ok / probe_total` over `/api/products`, `/api/recommendations`, `/api/cart`, `/api/checkout` (POST).
-6. `scripts/summarize_results.py` aggregates model and live data; Quick report prints two mix-based tables using the actual probe distribution: “All windows” and “Clean windows (no anomaly)” (the latter excludes windows marked as anomalous).
+4. Chaos (`scripts/compose_chaos.sh`) executes 10 windows of 60 s. In each window we run 30 HTTP probes (`collect_live.py`) and compute `R_live = probe_ok / probe_total`. Probes target `/api/products`, `/api/recommendations`, `/api/cart`, and the full checkout flow (POST).
+5. `scripts/summarize_results.py` aggregates model and live data, and the final “Print quick report” step prints a table with columns `p`, `R_model_all_block`, `R_model_async`, `R_live_mean`, `R_live_sd`, `N`.
 
 Artifacts per matrix cell:
 
@@ -103,7 +102,7 @@ Locust is used only to keep telemetry warm; it does not feed into the live metri
 - `--targets-file config/targets.json` loads endpoint specs.
 - `--endpoint "GET /api/products"` runs Monte Carlo strictly for that endpoint.
 - Without `--endpoint` but with `--targets-file`, each simulation picks a random endpoint (uniform over JSON keys) and checks only that one, mirroring `collect_live.py`.
-- `--disallowlist config/services_disallowlist.txt` excludes the listed services from chaos (everything else is eligible). The file includes the current OTel Demo frontend/infra services (frontend, jaeger, grafana, load-generator, opensearch, postgresql, image-provider, llm, flagd-ui, valkey-cart, etc.).
+- `--disallowlist config/services_disallowlist.txt` excludes the listed services from chaos (everything else is eligible).
 
 When `--endpoint` is set, the script writes `model_{mode}_e{endpoint}_p{p}_chunk{chunk}.json` and includes the endpoint label in the payload. The CI workflow iterates over every endpoint in `targets.json`, so artifacts are emitted for both `all-block` and `async` semantics.
 

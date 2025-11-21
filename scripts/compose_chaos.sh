@@ -136,31 +136,12 @@ if [ -s /tmp/killset.txt ]; then
       ANOMALIES+=("$v:$status")
     fi
   done
-  MONITOR_LOG="/tmp/chaos_monitor.log"
-  : > "$MONITOR_LOG"
-  start_ts=$(date +%s)
-  end_ts=$((start_ts + WINDOW))
-  while [ "$(date +%s)" -lt "$end_ts" ]; do
-    any_bad=0
-    for v in "${VICTIMS[@]}"; do
-      status=$(docker inspect -f '{{.State.Status}}' "$v" 2>/dev/null || echo "unknown")
-      if [[ "$status" != "exited" && "$status" != "dead" ]]; then
-        any_bad=1
-        echo "$(date --iso-8601=seconds) $v $status" >> "$MONITOR_LOG"
-      fi
-    done
-    sleep 1
-  done
-  if [ -s "$MONITOR_LOG" ] || [ ${#ANOMALIES[@]} -gt 0 ]; then
-    warn_list=("${ANOMALIES[@]}")
-    if [ -s "$MONITOR_LOG" ]; then
-      while IFS= read -r line; do warn_list+=("$line"); done < "$MONITOR_LOG"
-    fi
-    echo "[chaos] warning: anomalies during window: ${warn_list[*]}" >&2
-    python3 - <<'PY' "$P_FAIL" "$WINDOW" "$LOG_FILE" "${warn_list[@]}"
+  if [ ${#ANOMALIES[@]} -gt 0 ]; then
+    echo "[chaos] warning: anomalies after stop: ${ANOMALIES[*]}" >&2
+    python3 - <<'PY' "$P_FAIL" "$WINDOW" "$LOG_FILE" "${ANOMALIES[@]}"
 import sys, json, os
 p=float(sys.argv[1]); win=int(sys.argv[2]); log=sys.argv[3]
-warn=sys.argv[4:]
+anoms=sys.argv[4:]
 names=[]
 try:
     with open('/tmp/killset.txt') as f:
@@ -173,7 +154,7 @@ entry={
     'killed': len(names),
     'services': sorted(names),
     'window_s': win,
-    'anomaly': {'bad_stop_or_restart': warn}
+    'anomaly': {'bad_stop': anoms}
 }
 with open(log, 'a') as fh:
     fh.write(json.dumps(entry) + "\n")
