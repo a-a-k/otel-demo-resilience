@@ -118,6 +118,13 @@ if [ -s /tmp/killset.txt ]; then
   printf '  %s\n' "${VICTIMS[@]}"
   docker update --restart=no "${VICTIMS[@]}" >/dev/null 2>&1 || true
   xargs -r -a /tmp/killset.txt -n1 -P4 docker stop --time 1 || true
+  # Log any victims that are still not in exited/dead state after stop.
+  for v in "${VICTIMS[@]}"; do
+    status=$(docker inspect -f '{{.State.Status}}' "$v" 2>/dev/null || echo "unknown")
+    if [[ "$status" != "exited" && "$status" != "dead" ]]; then
+      echo "[chaos] warning: container '$v' status='$status' after stop" >&2
+    fi
+  done
   sleep "${WINDOW}"
   xargs -r -a /tmp/killset.txt -n1 -P4 docker start || true
   docker update --restart=unless-stopped "${VICTIMS[@]}" >/dev/null 2>&1 || true
