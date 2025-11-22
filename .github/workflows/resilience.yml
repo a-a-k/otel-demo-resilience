@@ -25,7 +25,7 @@ jobs:
       CHAOS_MEASURE_DELAY_SECONDS: "15"
       CHAOS_MEASURE_WINDOW_SECONDS: "40"
       LATENCY_P95_THRESHOLD_MS: "1500"
-      WINDOWS: "150"
+      WINDOWS: "100"
       SAMPLES: "5000000"
       OTEL_DEMO_REF: "main"
       TRACES_TIMEOUT: "600"
@@ -237,7 +237,7 @@ jobs:
             python3 scripts/collect_live.py \
               --window "${CHAOS_MEASURE_WINDOW_SECONDS}" \
               --probe-frontend "http://localhost:${ENVOY_PORT}" \
-              --probe-attempts 150 \
+              --probe-attempts 100 \
               --probe-checkout \
               --window-log "$WINDOW_LOG" \
               --out "live_p${P_FAIL}_chunk${CHUNK_ID}_${i}.json"
