@@ -1,4 +1,4 @@
-# otel-resilience-compose
+# otel-demo-resilience
 
 We study the resilience of the [OpenTelemetry Demo](https://github.com/open-telemetry/opentelemetry-demo) in Docker Compose, derive the dependency graph directly from traces, and compare two semantics for the model: “all edges are blocking” vs “Kafka edges are non-blocking”.
 
@@ -54,7 +54,7 @@ Within each job:
 1. Dependencies are collected **only from traces** (`scripts/traces_to_deps.py --fail-on-empty`). If Jaeger does not have traces, the job fails; there is no `/dependencies` fallback.
 2. `scripts/deps_to_graph.py` produces a single graph with an `async_edges` field (all edges touching Kafka). Topology is identical for both model semantics.
 3. `scripts/resilience.py` runs twice (all-block and async) on the same `graph.json`. No seeds are used — Monte Carlo relies on the natural PRNG.
-4. Chaos (`scripts/compose_chaos.sh`) executes 150 windows of 60 s. After a 15 s delay in each window, `collect_live.py` sends a burst of 150 HTTP probes and computes `R_live = probe_ok / probe_total`. Probes target `/api/products`, `/api/recommendations`, `/api/cart`, and the full checkout flow (POST).
+4. Chaos (`scripts/compose_chaos.sh`) executes 100 windows of 60 s. After a 15 s delay in each window, `collect_live.py` (invoked with `--window 40`) sends a burst of 100 HTTP probes and computes `R_live = probe_ok / probe_total`. Probes target `/api/products`, `/api/recommendations`, `/api/cart`, and the full checkout flow (POST).
 5. `scripts/summarize_results.py` aggregates model and live data, and the final “Print quick report” step prints a table with columns `p`, `R_model_all_block`, `R_model_async`, `R_live_mean`, `R_live_sd`, `N`.
 
 Artifacts per matrix cell:
@@ -73,7 +73,7 @@ Locust is used only to keep telemetry warm; it does not feed into the live metri
 
 ## Live metric
 
-`R_live` relies entirely on HTTP probes. Each window fires `probe_attempts` requests (150 in CI) as a burst after chaos starts, randomly alternating endpoints. The checkout scenario performs a full POST workflow (`cart → checkout`). `probe_detail` logs URL, method (`GET/POST`), status, and errors. `R_live = probe_ok / probe_total`, while `R_live_sd` and `N` describe the dispersion across windows. Without seeds, chaos kill sets and probes differ each run.
+`R_live` relies entirely on HTTP probes. Each window fires `probe_attempts` requests (100 in CI) as a burst after chaos starts, randomly alternating endpoints. The checkout scenario performs a full POST workflow (`cart → checkout`). `probe_detail` logs URL, method (`GET/POST`), status, and errors. `R_live = probe_ok / probe_total`, while `R_live_sd` and `N` describe the dispersion across windows. Without seeds, chaos kill sets and probes differ each run.
 
 ## Per-endpoint targets & evaluation
 
@@ -118,7 +118,7 @@ The “Quick report” step in CI reads these CSVs/JSONs and prints a compact ta
 
 - Kafka edges are reconstructed from real traces: `scripts/traces_to_deps.py` looks for spans with `messaging.system=kafka` and `span.kind=producer/consumer` so that `checkout→kafka` and `kafka→consumers` appear even without parentSpanId.
 - `scripts/deps_to_graph.py` never alters the service list per mode: the single graph is reused for both all-block and async semantics.
-- Probe/window counts are driven by `PROBE_ATTEMPTS` and `WINDOWS` in the workflow. Larger values reduce noise in `R_live` but increase runtime.
+- Probe/window counts are driven by `WINDOWS` and the explicit `--probe-attempts` flag passed in the workflow (100 in CI). Larger values reduce noise in `R_live` but increase runtime.
 - Seeds have been removed entirely: chaos, Monte Carlo, and bootstrap (in `summarize_results.py` we use `random.Random()` without a fixed seed) produce different results on each run.
 
 You can run individual scripts locally (e.g., only `collect_live.py`) for debugging. No Locust API is required — everything uses standard HTTP.
