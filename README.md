@@ -1,3 +1,7 @@
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17703953.svg)](https://doi.org/10.5281/zenodo.17703953)
+[![v1.0.0 Artifacts](https://img.shields.io/badge/Artifact-v1.0.0-blue)](https://github.com/a-a-k/otel-demo-resilience/actions/runs/19590510289#artifacts)
+[![otel-demo resilience study (compose)](https://github.com/a-a-k/otel-demo-resilience/actions/workflows/resilience.yml/badge.svg)](https://github.com/a-a-k/otel-demo-resilience/actions/workflows/resilience.yml)
+
 # otel-demo-resilience
 
 We study the resilience of the [OpenTelemetry Demo](https://github.com/open-telemetry/opentelemetry-demo) in Docker Compose, derive the dependency graph directly from traces, and compare two semantics for the model: “all edges are blocking” vs “Kafka edges are non-blocking”.
